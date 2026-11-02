@@ -10,7 +10,6 @@ use crate::avm2::value::Value;
 use crate::string::AvmString;
 use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
 use flash_lso::amf0::read::AMF0Decoder;
-use flash_lso::amf3::read::AMF3Decoder;
 use flash_lso::types::{AMFVersion, Element};
 use ruffle_macros::istr;
 use ruffle_wstr::WString;
@@ -788,6 +787,15 @@ pub fn read_object<'gc>(
 ) -> Result<Value<'gc>, Error<'gc>> {
     let this = this.as_object().unwrap();
 
+    // AMF3 is read by the AVM2 itself, so that `IExternalizable` objects can read
+    // their data from this same `ByteArray`.
+    if this
+        .as_bytearray()
+        .is_some_and(|b| b.object_encoding() == ObjectEncoding::Amf3)
+    {
+        return crate::avm2::amf_read::read_amf3_value(activation, this);
+    }
+
     if let Some(bytearray) = this.as_bytearray() {
         let bytes = bytearray
             .read_at(bytearray.bytes_available(), bytearray.position())
@@ -804,16 +812,7 @@ pub fn read_object<'gc>(
                     crate::avm2::amf::deserialize_value(activation, &amf)?,
                 )
             }
-            ObjectEncoding::Amf3 => {
-                let mut decoder = AMF3Decoder::default();
-                let (extra, amf) = decoder
-                    .parse_single_element(bytes)
-                    .map_err(|_| "Error: Invalid object")?;
-                (
-                    extra.len(),
-                    crate::avm2::amf::deserialize_value(activation, &amf)?,
-                )
-            }
+            ObjectEncoding::Amf3 => unreachable!(),
         };
 
         bytearray.set_position(bytearray.len() - bytes_left);

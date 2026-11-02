@@ -1,7 +1,7 @@
 use crate::avm2::function::FunctionArgs;
 use crate::avm2::object::script_object::ScriptObjectData;
 use crate::avm2::object::{ClassObject, FunctionObject, Object, TObject};
-use crate::avm2::{Activation, Error};
+use crate::avm2::{Activation, Error, Value};
 use crate::net_connection::ResponderCallback;
 use flash_lso::types::Value as AMFValue;
 use gc_arena::barrier::unlock;
@@ -76,6 +76,25 @@ impl<'gc> ResponderObject<'gc> {
             let value = crate::avm2::amf::deserialize_value(activation, message)?;
             let args = &[value];
             function.call(activation, self.into(), FunctionArgs::from_slice(args))?;
+        }
+
+        Ok(())
+    }
+
+    /// Like `send_callback`, for a message already deserialized by the AVM2.
+    pub fn send_callback_value(
+        self,
+        activation: &mut Activation<'_, 'gc>,
+        callback: ResponderCallback,
+        value: Value<'gc>,
+    ) -> Result<(), Error<'gc>> {
+        let function = match callback {
+            ResponderCallback::Result => self.0.result.get(),
+            ResponderCallback::Status => self.0.status.get(),
+        };
+
+        if let Some(function) = function {
+            function.call(activation, self.into(), FunctionArgs::from_slice(&[value]))?;
         }
 
         Ok(())

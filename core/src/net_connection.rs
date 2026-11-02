@@ -476,6 +476,28 @@ pub struct FlashRemoting {
     packet_version: AMFVersion,
 }
 
+/// Finds the responder for a response message, from its target URI ("/1/onResult").
+fn find_responder(
+    responder_handles: &[Option<ResponderHandle>],
+    target_uri: &str,
+) -> Option<(ResponderHandle, ResponderCallback)> {
+    let target_uri = target_uri.strip_prefix('/')?;
+    let (index, callback) = if let Some(index) = target_uri.strip_suffix("/onStatus") {
+        (index, ResponderCallback::Status)
+    } else {
+        (
+            target_uri.strip_suffix("/onResult")?,
+            ResponderCallback::Result,
+        )
+    };
+    let index = index.parse::<usize>().ok()?;
+    responder_handles
+        .get(index.wrapping_sub(1))
+        .cloned()
+        .flatten()
+        .map(|handle| (handle, callback))
+}
+
 impl FlashRemoting {
     pub fn send(
         &mut self,
@@ -580,35 +602,56 @@ impl FlashRemoting {
                 }
             };
 
+            // AVM2 reads the response itself, so that it can contain `IExternalizable`
+            // objects (which `flash_lso` can't parse without running their `readExternal`).
+            let is_avm2 = responder_handles
+                .iter()
+                .flatten()
+                .any(|handle| matches!(handle, ResponderHandle::Avm2(_)));
+            if is_avm2 {
+                player.lock().unwrap().update(|uc| {
+                    let mut activation = Avm2Activation::from_nothing(uc);
+                    let result = crate::avm2::amf_read::read_remoting_response(
+                        &mut activation,
+                        response,
+                        |activation, target_uri, value| {
+                            if let Some((ResponderHandle::Avm2(handle), callback)) =
+                                find_responder(&responder_handles, target_uri)
+                            {
+                                let object = *activation.context.dynamic_root.fetch(&handle);
+                                if let Err(err) =
+                                    object.send_callback_value(activation, callback, value)
+                                {
+                                    Avm2::uncaught_error(
+                                        activation,
+                                        None,
+                                        err,
+                                        "Error running AVM2 NetConnection callback",
+                                    );
+                                }
+                            }
+                        },
+                    );
+                    if let Err(err) = result {
+                        Avm2::uncaught_error(
+                            &mut activation,
+                            None,
+                            err,
+                            "Error reading AMF response",
+                        );
+                    }
+                });
+                return Ok(());
+            }
+
             // Flash completely ignores invalid responses, it seems
             if let Ok(response_packet) = flash_lso::packet::read::parse(&response) {
                 player.lock().unwrap().update(|uc| {
                     for message in response_packet.messages {
-                        if let Some(target_uri) = message.target_uri.strip_prefix('/') {
-                            let mut responder = None;
-                            if let Some(index) = target_uri
-                                .strip_suffix("/onStatus")
-                                .and_then(|str| str::parse::<usize>(str).ok())
-                            {
-                                responder = responder_handles
-                                    .get(index.wrapping_sub(1))
-                                    .cloned()
-                                    .flatten()
-                                    .map(|handle| (handle, ResponderCallback::Status));
-                            } else if let Some(index) = target_uri
-                                .strip_suffix("/onResult")
-                                .and_then(|str| str::parse::<usize>(str).ok())
-                            {
-                                responder = responder_handles
-                                    .get(index.wrapping_sub(1))
-                                    .cloned()
-                                    .flatten()
-                                    .map(|handle| (handle, ResponderCallback::Result));
-                            }
-
-                            if let Some((responder_handle, callback)) = responder {
-                                responder_handle.call(uc, callback, message.contents);
-                            }
+                        if let Some((responder_handle, callback)) =
+                            find_responder(&responder_handles, &message.target_uri)
+                        {
+                            responder_handle.call(uc, callback, message.contents);
                         }
                     }
                 });
