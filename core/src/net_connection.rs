@@ -176,6 +176,7 @@ impl<'gc> NetConnections<'gc> {
                 url,
                 headers: vec![],
                 outgoing_queue: vec![],
+                packet_version: AMFVersion::AMF0,
             }),
         };
         let handle = context.net_connections.connections.insert(connection);
@@ -250,9 +251,10 @@ impl<'gc> NetConnections<'gc> {
         handle: NetConnectionHandle,
         command: String,
         message: AmfValue,
+        amf_version: AMFVersion,
     ) {
         if let Some(connection) = context.net_connections.connections.get_mut(handle) {
-            connection.send(command, None, message);
+            connection.send(command, None, message, amf_version);
         }
     }
 
@@ -261,6 +263,7 @@ impl<'gc> NetConnections<'gc> {
         handle: NetConnectionHandle,
         command: String,
         message: AmfValue,
+        amf_version: AMFVersion,
         responder: Avm2ResponderObject<'gc>,
     ) {
         let mc = context.gc();
@@ -268,7 +271,7 @@ impl<'gc> NetConnections<'gc> {
             // TODO(moulins): it'd be nice to avoid the double indirection here...
             let responder_handle =
                 ResponderHandle::Avm2(context.dynamic_root.stash(mc, Gc::new(mc, responder)));
-            connection.send(command, Some(responder_handle), message);
+            connection.send(command, Some(responder_handle), message, amf_version);
         }
     }
 
@@ -277,6 +280,7 @@ impl<'gc> NetConnections<'gc> {
         handle: NetConnectionHandle,
         command: String,
         message: AmfValue,
+        amf_version: AMFVersion,
         responder: Avm1Object<'gc>,
     ) {
         let mc = context.gc();
@@ -284,7 +288,7 @@ impl<'gc> NetConnections<'gc> {
             // TODO(moulins): it'd be nice to avoid the double indirection here...
             let responder_handle =
                 ResponderHandle::Avm1(context.dynamic_root.stash(mc, Gc::new(mc, responder)));
-            connection.send(command, Some(responder_handle), message);
+            connection.send(command, Some(responder_handle), message, amf_version);
         }
     }
 
@@ -418,11 +422,12 @@ impl NetConnection<'_> {
         command: String,
         responder_handle: Option<ResponderHandle>,
         message: AmfValue,
+        amf_version: AMFVersion,
     ) {
         match &mut self.protocol {
             NetConnectionProtocol::Local => {}
             NetConnectionProtocol::FlashRemoting(remoting) => {
-                remoting.send(command, responder_handle, message)
+                remoting.send(command, responder_handle, message, amf_version)
             }
         }
     }
@@ -467,6 +472,8 @@ pub struct FlashRemoting {
     url: String,
     headers: Vec<Header>,
     outgoing_queue: Vec<(Message, Option<ResponderHandle>)>,
+    /// Version of the next packet: AMF3 if any queued message was encoded with AMF3.
+    packet_version: AMFVersion,
 }
 
 impl FlashRemoting {
@@ -475,7 +482,11 @@ impl FlashRemoting {
         command: String,
         responder_handle: Option<ResponderHandle>,
         message: AmfValue,
+        amf_version: AMFVersion,
     ) {
+        if amf_version == AMFVersion::AMF3 {
+            self.packet_version = AMFVersion::AMF3;
+        }
         self.outgoing_queue.push((
             Message {
                 target_uri: command,
@@ -504,9 +515,10 @@ impl FlashRemoting {
         player: Arc<Mutex<Player>>,
     ) -> OwnedFuture<(), Error> {
         let queue = std::mem::take(&mut self.outgoing_queue);
+        let version = std::mem::replace(&mut self.packet_version, AMFVersion::AMF0);
         let (messages, responder_handles): (Vec<_>, Vec<_>) = queue.into_iter().unzip();
         let packet = Packet {
-            version: AMFVersion::AMF0,
+            version,
             headers: self.headers.clone(),
             messages,
         };

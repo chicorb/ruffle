@@ -1,12 +1,13 @@
 use crate::avm2::amf::serialize_value;
 use crate::avm2::error::make_error_2126;
 use crate::avm2::function::FunctionArgs;
+use crate::avm2::globals::slots::flash_net_net_connection as net_connection_slots;
 pub use crate::avm2::object::net_connection_allocator;
 use crate::avm2::parameters::ParametersExt;
 use crate::net_connection::NetConnections;
 use crate::string::AvmString;
 use crate::{
-    avm2::{Activation, Error, Value},
+    avm2::{Activation, Error, TObject as _, Value},
     avm2_stub_method,
 };
 use flash_lso::packet::Header;
@@ -280,9 +281,25 @@ pub fn call<'gc>(
     let responder = args.try_get_object(1).and_then(|o| o.as_responder());
     let mut arguments = Vec::new();
 
+    // With `objectEncoding == 3`, Flash sends each argument as an AMF3 value
+    // (an AMF0 "AVM+" marker followed by the AMF3 data) in a version 3 packet.
+    let object_encoding = this
+        .get_slot(net_connection_slots::_OBJECT_ENCODING)
+        .coerce_to_u32(activation)?;
+    let amf_version = if object_encoding == 3 {
+        AMFVersion::AMF3
+    } else {
+        AMFVersion::AMF0
+    };
+
     let mut object_table = FnvHashMap::default();
     for arg in args.get_slice_from(2..) {
-        let value = serialize_value(activation, arg, AMFVersion::AMF0, &mut object_table);
+        let value = serialize_value(activation, arg, amf_version, &mut object_table);
+        let value = if amf_version == AMFVersion::AMF3 {
+            AMFValue::AMF3(Box::new(value))
+        } else {
+            value
+        };
         arguments.push(value);
     }
 
@@ -296,6 +313,7 @@ pub fn call<'gc>(
                     id: ObjectId::INVALID,
                     values: arguments,
                 },
+                amf_version,
                 responder,
             );
         } else {
@@ -307,6 +325,7 @@ pub fn call<'gc>(
                     id: ObjectId::INVALID,
                     values: arguments,
                 },
+                amf_version,
             );
         }
 
