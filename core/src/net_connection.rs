@@ -176,7 +176,6 @@ impl<'gc> NetConnections<'gc> {
                 url,
                 headers: vec![],
                 outgoing_queue: vec![],
-                packet_version: AMFVersion::AMF0,
             }),
         };
         let handle = context.net_connections.connections.insert(connection);
@@ -250,11 +249,10 @@ impl<'gc> NetConnections<'gc> {
         context: &mut UpdateContext<'gc>,
         handle: NetConnectionHandle,
         command: String,
-        message: AmfValue,
-        amf_version: AMFVersion,
+        contents: MessageContents,
     ) {
         if let Some(connection) = context.net_connections.connections.get_mut(handle) {
-            connection.send(command, None, message, amf_version);
+            connection.send(command, None, contents);
         }
     }
 
@@ -262,8 +260,7 @@ impl<'gc> NetConnections<'gc> {
         context: &mut UpdateContext<'gc>,
         handle: NetConnectionHandle,
         command: String,
-        message: AmfValue,
-        amf_version: AMFVersion,
+        contents: MessageContents,
         responder: Avm2ResponderObject<'gc>,
     ) {
         let mc = context.gc();
@@ -271,7 +268,7 @@ impl<'gc> NetConnections<'gc> {
             // TODO(moulins): it'd be nice to avoid the double indirection here...
             let responder_handle =
                 ResponderHandle::Avm2(context.dynamic_root.stash(mc, Gc::new(mc, responder)));
-            connection.send(command, Some(responder_handle), message, amf_version);
+            connection.send(command, Some(responder_handle), contents);
         }
     }
 
@@ -279,8 +276,7 @@ impl<'gc> NetConnections<'gc> {
         context: &mut UpdateContext<'gc>,
         handle: NetConnectionHandle,
         command: String,
-        message: AmfValue,
-        amf_version: AMFVersion,
+        contents: MessageContents,
         responder: Avm1Object<'gc>,
     ) {
         let mc = context.gc();
@@ -288,7 +284,7 @@ impl<'gc> NetConnections<'gc> {
             // TODO(moulins): it'd be nice to avoid the double indirection here...
             let responder_handle =
                 ResponderHandle::Avm1(context.dynamic_root.stash(mc, Gc::new(mc, responder)));
-            connection.send(command, Some(responder_handle), message, amf_version);
+            connection.send(command, Some(responder_handle), contents);
         }
     }
 
@@ -421,13 +417,12 @@ impl NetConnection<'_> {
         &mut self,
         command: String,
         responder_handle: Option<ResponderHandle>,
-        message: AmfValue,
-        amf_version: AMFVersion,
+        contents: MessageContents,
     ) {
         match &mut self.protocol {
             NetConnectionProtocol::Local => {}
             NetConnectionProtocol::FlashRemoting(remoting) => {
-                remoting.send(command, responder_handle, message, amf_version)
+                remoting.send(command, responder_handle, contents)
             }
         }
     }
@@ -471,9 +466,102 @@ pub enum NetConnectionProtocol {
 pub struct FlashRemoting {
     url: String,
     headers: Vec<Header>,
-    outgoing_queue: Vec<(Message, Option<ResponderHandle>)>,
-    /// Version of the next packet: AMF3 if any queued message was encoded with AMF3.
-    packet_version: AMFVersion,
+    outgoing_queue: Vec<(OutgoingMessage, Option<ResponderHandle>)>,
+}
+
+/// The arguments of a remoting call.
+#[derive(Debug)]
+pub enum MessageContents {
+    /// An AMF0 value (usually a strict array of the arguments).
+    Amf0(AmfValue),
+
+    /// Arguments already serialized as AMF3 (see `avm2::amf_write`). They are sent as an
+    /// AMF0 strict array of AMF3 values, in a version 3 packet.
+    Amf3Arguments(Vec<Vec<u8>>),
+}
+
+#[derive(Debug)]
+struct OutgoingMessage {
+    target_uri: String,
+    response_uri: String,
+    contents: MessageContents,
+}
+
+/// Serializes a remoting packet.
+fn write_packet(headers: &[Header], messages: Vec<OutgoingMessage>) -> Vec<u8> {
+    let has_amf3 = messages
+        .iter()
+        .any(|m| matches!(m.contents, MessageContents::Amf3Arguments(_)));
+    let version = if has_amf3 {
+        AMFVersion::AMF3
+    } else {
+        AMFVersion::AMF0
+    };
+    let write = |headers: Vec<Header>, messages: Vec<Message>| {
+        let packet = Packet {
+            version,
+            headers,
+            messages,
+        };
+        flash_lso::packet::write::write_to_bytes(&packet, true)
+            .expect("Must be able to serialize a packet")
+    };
+    let amf0_message = |target_uri: String, response_uri: String, value: AmfValue| Message {
+        target_uri,
+        response_uri,
+        contents: value,
+    };
+
+    if !has_amf3 {
+        let messages = messages
+            .into_iter()
+            .map(|m| match m.contents {
+                MessageContents::Amf0(value) => amf0_message(m.target_uri, m.response_uri, value),
+                MessageContents::Amf3Arguments(_) => unreachable!(),
+            })
+            .collect();
+        return write(headers.to_vec(), messages);
+    }
+
+    // `flash_lso` can't embed already serialized AMF3, so the framing is written here; each
+    // header and AMF0 message is still serialized by `flash_lso`, in a packet of its own.
+    let mut out = vec![0, 3];
+    out.extend((headers.len() as u16).to_be_bytes());
+    for header in headers {
+        let bytes = write(vec![header.clone()], vec![]);
+        // Skip the version and header count, and the trailing message count.
+        out.extend(&bytes[4..bytes.len() - 2]);
+    }
+    out.extend((messages.len() as u16).to_be_bytes());
+    for OutgoingMessage {
+        target_uri,
+        response_uri,
+        contents,
+    } in messages
+    {
+        match contents {
+            MessageContents::Amf0(value) => {
+                let bytes = write(vec![], vec![amf0_message(target_uri, response_uri, value)]);
+                // Skip the version, header count and message count.
+                out.extend(&bytes[6..]);
+            }
+            MessageContents::Amf3Arguments(arguments) => {
+                for uri in [&target_uri, &response_uri] {
+                    out.extend((uri.len() as u16).to_be_bytes());
+                    out.extend(uri.as_bytes());
+                }
+                let mut body = vec![0x0A]; // Strict array
+                body.extend((arguments.len() as u32).to_be_bytes());
+                for argument in arguments {
+                    body.push(0x11); // Switch to AMF3
+                    body.extend(argument);
+                }
+                out.extend((body.len() as u32).to_be_bytes());
+                out.extend(body);
+            }
+        }
+    }
+    out
 }
 
 /// Finds the responder for a response message, from its target URI ("/1/onResult").
@@ -503,17 +591,13 @@ impl FlashRemoting {
         &mut self,
         command: String,
         responder_handle: Option<ResponderHandle>,
-        message: AmfValue,
-        amf_version: AMFVersion,
+        contents: MessageContents,
     ) {
-        if amf_version == AMFVersion::AMF3 {
-            self.packet_version = AMFVersion::AMF3;
-        }
         self.outgoing_queue.push((
-            Message {
+            OutgoingMessage {
                 target_uri: command,
                 response_uri: format!("/{}", self.outgoing_queue.len() + 1), // Flash is 1-based... simplifies tests to stay the same
-                contents: message,
+                contents,
             },
             responder_handle,
         ));
@@ -537,18 +621,11 @@ impl FlashRemoting {
         player: Arc<Mutex<Player>>,
     ) -> OwnedFuture<(), Error> {
         let queue = std::mem::take(&mut self.outgoing_queue);
-        let version = std::mem::replace(&mut self.packet_version, AMFVersion::AMF0);
         let (messages, responder_handles): (Vec<_>, Vec<_>) = queue.into_iter().unzip();
-        let packet = Packet {
-            version,
-            headers: self.headers.clone(),
-            messages,
-        };
+        let bytes = write_packet(&self.headers, messages);
         let url = self.url.clone();
 
         Box::pin(async move {
-            let bytes = flash_lso::packet::write::write_to_bytes(&packet, true)
-                .expect("Must be able to serialize a packet");
             let request = Request::post(url, Some((bytes, "application/x-amf".to_string())));
             let fetch = player.lock().unwrap().fetch(request, FetchReason::Other);
             let response: Result<_, ErrorResponse> = async {

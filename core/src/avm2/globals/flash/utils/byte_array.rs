@@ -829,6 +829,16 @@ pub fn write_object<'gc>(
 ) -> Result<Value<'gc>, Error<'gc>> {
     let this = this.as_object().unwrap();
 
+    // AMF3 is written by the AVM2 itself, so that `IExternalizable` objects can write
+    // their data to this same `ByteArray`.
+    if this
+        .as_bytearray()
+        .is_some_and(|b| b.object_encoding() == ObjectEncoding::Amf3)
+    {
+        crate::avm2::amf_write::write_amf3_value(activation, this, args.get_value(0))?;
+        return Ok(Value::Undefined);
+    }
+
     if let Some(mut bytearray) = this.as_bytearray_mut() {
         let obj = args.get_value(0);
         let amf_version = match bytearray.object_encoding() {
