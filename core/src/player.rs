@@ -62,8 +62,9 @@ use crate::vminterface::Instantiator;
 use async_channel::Sender;
 use enumset::EnumSet;
 use fnv::FnvHashSet;
+use gc_arena::arena::CollectionPhase;
 use gc_arena::lock::GcRefLock;
-use gc_arena::{Collect, DynamicRootSet, Mutation, Rootable};
+use gc_arena::{Collect, DynamicRootSet, Finalization, Gc, Mutation, Rootable};
 use ruffle_common::duration::FloatDuration;
 use ruffle_macros::istr;
 use ruffle_render::backend::{RenderBackend, ViewportDimensions, null::NullRenderer};
@@ -2384,9 +2385,70 @@ impl Player {
         self.update_mouse_state(EnumSet::empty(), false, &mut false);
 
         // GC
-        self.gc_arena.borrow_mut().collect_debt();
+        Self::collect_debt(&mut self.gc_arena.borrow_mut());
 
         rval
+    }
+
+    /// Does the pending garbage collection work, like `Arena::collect_debt`.
+    ///
+    /// Before sweeping, it runs the finalization of the ephemeron tables (see
+    /// `Library::resurrect_live_entries`), so a collection cycle is never
+    /// finished without it.
+    fn collect_debt(arena: &mut GcArena) {
+        if arena.collection_phase() == CollectionPhase::Sweeping {
+            // Stop at the end of this cycle: the next one must be marked here.
+            arena.cycle_debt();
+            return;
+        }
+        // Each pass can resurrect more objects to mark; keep marking them
+        // while there is debt, so the cycle ends when it would without
+        // ephemerons.
+        while let Some(marked) = arena.mark_debt() {
+            if marked.finalize(Self::finalize_ephemerons) {
+                // Nothing new was resurrected: the arena is still fully marked.
+                arena
+                    .finish_marking()
+                    .expect("arena is fully marked")
+                    .start_sweeping();
+                arena.cycle_debt();
+                return;
+            }
+        }
+    }
+
+    /// Runs a full garbage collection cycle, finishing the current one first.
+    pub fn collect_all_garbage(&mut self) {
+        let mut arena = self.gc_arena.borrow_mut();
+        for _ in 0..2 {
+            loop {
+                if arena.collection_phase() == CollectionPhase::Sweeping {
+                    arena.finish_cycle();
+                    break;
+                }
+                let marked = arena.finish_marking().expect("arena is fully marked");
+                if marked.finalize(Self::finalize_ephemerons) {
+                    arena
+                        .finish_marking()
+                        .expect("arena is fully marked")
+                        .start_sweeping();
+                }
+            }
+        }
+    }
+
+    /// Returns true when the arena is ready to be swept, or false when
+    /// something was resurrected and must be marked first.
+    fn finalize_ephemerons<'gc>(fc: &'gc Finalization<'gc>, root: &'gc GcRoot<'gc>) -> bool {
+        if root.data.borrow().library.resurrect_live_entries(fc) {
+            return false;
+        }
+        Gc::write(fc, root.data)
+            .unlock()
+            .borrow_mut()
+            .library
+            .remove_dead_entries(fc);
+        true
     }
 
     pub fn flush_shared_objects(&mut self) {

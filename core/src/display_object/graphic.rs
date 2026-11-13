@@ -226,7 +226,7 @@ impl<'gc> TDisplayObject<'gc> for Graphic<'gc> {
         // This does not create a new instance, but instead swaps out the underlying static data to point to the new art.
         if let Some(new_graphic) = context
             .library
-            .library_for_movie_mut(self.movie())
+            .library_for_movie_mut(self.movie(), context.gc())
             .get_graphic(id)
         {
             self.set_shared(context.gc(), new_graphic.0.shared.get());

@@ -1,6 +1,6 @@
 use crate::sandbox::SandboxType;
 
-use gc_arena::{Collect, Gc, GcWeak, Mutation};
+use gc_arena::{Collect, Finalization, Gc, GcWeak, Mutation};
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
@@ -30,6 +30,17 @@ impl<'gc> SwfMovie<'gc> {
 
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
         std::ptr::eq(this.as_ptr(), other.as_ptr())
+    }
+
+    /// Returns true if nothing strongly references this movie, during
+    /// finalization. See `Gc::is_dead`.
+    pub fn is_dead(self, fc: &Finalization<'gc>) -> bool {
+        Gc::is_dead(fc, self.0)
+    }
+
+    /// Keeps this movie alive in this collection cycle. See `Gc::resurrect`.
+    pub fn resurrect(self, fc: &Finalization<'gc>) {
+        Gc::resurrect(fc, self.0)
     }
 }
 
