@@ -34,6 +34,8 @@ use swf::error::AbcParseError;
 
 pub mod activation;
 mod amf;
+pub mod amf_read;
+pub mod amf_write;
 pub mod api_version;
 mod array;
 pub mod bytearray;
@@ -165,6 +167,13 @@ pub struct Avm2<'gc> {
     alias_to_class_map: FnvHashMap<AvmString<'gc>, ClassObject<'gc>>,
     class_to_alias_map: FnvHashMap<Class<'gc>, AvmString<'gc>>,
 
+    /// Reference tables of the AMF3 reads currently inside `readExternal`, with the
+    /// `ByteArray` they read from. See `amf_read`.
+    amf3_read_tables: Vec<(Object<'gc>, amf_read::Amf3Tables<'gc>)>,
+
+    /// Same as `amf3_read_tables`, for AMF3 writes inside `writeExternal`. See `amf_write`.
+    amf3_write_tables: Vec<(Object<'gc>, amf_write::Amf3WriteTables<'gc>)>,
+
     #[collect(require_static)]
     pub xml_settings: XmlSettings,
 
@@ -220,6 +229,9 @@ impl<'gc> Avm2<'gc> {
             alias_to_class_map: Default::default(),
             class_to_alias_map: Default::default(),
 
+            amf3_read_tables: Default::default(),
+            amf3_write_tables: Default::default(),
+
             xml_settings: XmlSettings::new_default(),
             default_bytearray_encoding: ObjectEncoding::Amf3,
 
@@ -269,6 +281,44 @@ impl<'gc> Avm2<'gc> {
 
     pub fn get_alias_by_class(&self, cls: Class<'gc>) -> Option<AvmString<'gc>> {
         self.class_to_alias_map.get(&cls).copied()
+    }
+
+    pub fn push_amf3_read_tables(&mut self, input: Object<'gc>, tables: amf_read::Amf3Tables<'gc>) {
+        self.amf3_read_tables.push((input, tables));
+    }
+
+    pub fn push_amf3_write_tables(
+        &mut self,
+        output: Object<'gc>,
+        tables: amf_write::Amf3WriteTables<'gc>,
+    ) {
+        self.amf3_write_tables.push((output, tables));
+    }
+
+    /// Takes the tables of the innermost AMF3 write, if it writes to `output`.
+    pub fn take_amf3_write_tables(
+        &mut self,
+        output: Object<'gc>,
+    ) -> Option<amf_write::Amf3WriteTables<'gc>> {
+        match self.amf3_write_tables.last() {
+            Some((top, _)) if Object::ptr_eq(*top, output) => {
+                self.amf3_write_tables.pop().map(|(_, tables)| tables)
+            }
+            _ => None,
+        }
+    }
+
+    /// Takes the tables of the innermost AMF3 read, if it reads from `input`.
+    pub fn take_amf3_read_tables(
+        &mut self,
+        input: Object<'gc>,
+    ) -> Option<amf_read::Amf3Tables<'gc>> {
+        match self.amf3_read_tables.last() {
+            Some((top, _)) if Object::ptr_eq(*top, input) => {
+                self.amf3_read_tables.pop().map(|(_, tables)| tables)
+            }
+            _ => None,
+        }
     }
 
     /// Run a script's initializer method.

@@ -5,7 +5,9 @@ use crate::avm1::{
 };
 use crate::avm1_stub;
 use crate::context::UpdateContext;
-use crate::net_connection::{NetConnectionHandle, NetConnections, ResponderCallback};
+use crate::net_connection::{
+    MessageContents, NetConnectionHandle, NetConnections, ResponderCallback,
+};
 use crate::string::AvmString;
 use flash_lso::packet::Header;
 use flash_lso::types::ObjectId;
@@ -277,10 +279,10 @@ fn call<'gc>(
                 activation.context,
                 handle,
                 command.to_string(),
-                AMFValue::StrictArray {
+                MessageContents::Amf0(AMFValue::StrictArray {
                     id: ObjectId::INVALID,
                     values: arguments,
-                },
+                }),
                 responder,
             );
         } else {
@@ -288,10 +290,10 @@ fn call<'gc>(
                 activation.context,
                 handle,
                 command.to_string(),
-                AMFValue::StrictArray {
+                MessageContents::Amf0(AMFValue::StrictArray {
                     id: ObjectId::INVALID,
                     values: arguments,
-                },
+                }),
             );
         }
     }

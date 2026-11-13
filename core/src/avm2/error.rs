@@ -1028,6 +1028,12 @@ pub fn make_error_2008<'gc>(activation: &mut Activation<'_, 'gc>, param_name: &s
 
 #[inline(never)]
 #[cold]
+pub fn make_error_2173<'gc>(activation: &mut Activation<'_, 'gc>, class_name: &str) -> Error<'gc> {
+    make_error!(error(activation, error_message!(2173, class_name), 2173))
+}
+
+#[inline(never)]
+#[cold]
 pub fn make_error_2012<'gc>(
     activation: &mut Activation<'_, 'gc>,
     class_name: impl Display,

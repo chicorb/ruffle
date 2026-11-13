@@ -1,12 +1,13 @@
 use crate::avm2::amf::serialize_value;
 use crate::avm2::error::make_error_2126;
 use crate::avm2::function::FunctionArgs;
+use crate::avm2::globals::slots::flash_net_net_connection as net_connection_slots;
 pub use crate::avm2::object::net_connection_allocator;
 use crate::avm2::parameters::ParametersExt;
-use crate::net_connection::NetConnections;
+use crate::net_connection::{MessageContents, NetConnections};
 use crate::string::AvmString;
 use crate::{
-    avm2::{Activation, Error, Value},
+    avm2::{Activation, Error, TObject as _, Value},
     avm2_stub_method,
 };
 use flash_lso::packet::Header;
@@ -278,13 +279,30 @@ pub fn call<'gc>(
 
     let command = args.get_string(activation, 0);
     let responder = args.try_get_object(1).and_then(|o| o.as_responder());
-    let mut arguments = Vec::new();
 
-    let mut object_table = FnvHashMap::default();
-    for arg in args.get_slice_from(2..) {
-        let value = serialize_value(activation, arg, AMFVersion::AMF0, &mut object_table);
-        arguments.push(value);
-    }
+    // With `objectEncoding == 3`, Flash sends each argument as an AMF3 value
+    // (an AMF0 "AVM+" marker followed by the AMF3 data) in a version 3 packet.
+    let object_encoding = this
+        .get_slot(net_connection_slots::_OBJECT_ENCODING)
+        .coerce_to_u32(activation)?;
+    let contents = if object_encoding == 3 {
+        let mut arguments = Vec::new();
+        for arg in args.get_slice_from(2..) {
+            arguments.push(crate::avm2::amf_write::amf3_bytes(activation, arg)?);
+        }
+        MessageContents::Amf3Arguments(arguments)
+    } else {
+        let mut arguments = Vec::new();
+        let mut object_table = FnvHashMap::default();
+        for arg in args.get_slice_from(2..) {
+            let value = serialize_value(activation, arg, AMFVersion::AMF0, &mut object_table);
+            arguments.push(value);
+        }
+        MessageContents::Amf0(AMFValue::StrictArray {
+            id: ObjectId::INVALID,
+            values: arguments,
+        })
+    };
 
     if let Some(handle) = connection.handle() {
         if let Some(responder) = responder {
@@ -292,10 +310,7 @@ pub fn call<'gc>(
                 activation.context,
                 handle,
                 command.to_string(),
-                AMFValue::StrictArray {
-                    id: ObjectId::INVALID,
-                    values: arguments,
-                },
+                contents,
                 responder,
             );
         } else {
@@ -303,10 +318,7 @@ pub fn call<'gc>(
                 activation.context,
                 handle,
                 command.to_string(),
-                AMFValue::StrictArray {
-                    id: ObjectId::INVALID,
-                    values: arguments,
-                },
+                contents,
             );
         }
 
