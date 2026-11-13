@@ -1,0 +1,11 @@
+before: hasEventListener true
+kept receiver got ping
+kept weak closure got ping
+strong closure got ping
+after: hasEventListener true
+kept receiver got ping
+kept weak closure got ping
+strong closure got ping
+removed: dispatching again
+strong closure got ping
+done
