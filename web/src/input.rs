@@ -263,6 +263,17 @@ fn map_key_location(location: u32) -> KeyLocation {
     }
 }
 
+/// Whether a key press with these modifiers is a shortcut, whose character
+/// must not be typed into a text field.
+///
+/// Flash Player does not type the character of Ctrl+key (Cmd+key on macOS):
+/// Ctrl+Z, for example, leaves the text unchanged.
+/// AltGr is reported as Ctrl+Alt on Windows and does type text
+/// (e.g. AltGr+Q is `/` on a Brazilian keyboard), so Ctrl+Alt is not a shortcut.
+pub fn is_shortcut_key_press(ctrl_key: bool, alt_key: bool, meta_key: bool) -> bool {
+    meta_key || (ctrl_key && !alt_key)
+}
+
 /// Convert a web keyboard event to a Ruffle `TextControlCode`, given the
 /// states of the modifier keys. Return `None` if there is no match.
 ///
