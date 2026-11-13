@@ -1,0 +1,16 @@
+Shift+End: caret=17 sel=12-17
+Home: caret=9 sel=9-9
+Shift+End: caret=17 sel=9-17
+End: caret=17 sel=17-17
+Shift+Home: caret=9 sel=9-17
+End: caret=17 sel=17-17
+Shift+Home: caret=9 sel=9-17
+Ctrl+End: caret=28 sel=28-28
+Shift+Left: caret=27 sel=27-28
+Shift+Left: caret=26 sel=26-28
+Ctrl+Home: caret=0 sel=0-0
+Shift+Right: caret=1 sel=0-1
+Shift+Right: caret=2 sel=0-2
+Left: caret=0 sel=0-0
+Shift+Right: caret=1 sel=0-1
+Right: caret=1 sel=1-1

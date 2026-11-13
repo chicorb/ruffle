@@ -1734,10 +1734,7 @@ impl<'gc> EditText<'gc> {
             TextControlCode::Enter => {
                 self.text_input(Self::INPUT_NEWLINE.to_string(), context);
             }
-            TextControlCode::MoveLeft
-            | TextControlCode::MoveLeftWord
-            | TextControlCode::MoveLeftLine
-            | TextControlCode::MoveLeftDocument => {
+            TextControlCode::MoveLeft | TextControlCode::MoveLeftWord => {
                 let new_pos = if selection.is_caret() {
                     self.find_new_position(control_code, selection.to)
                 } else {
@@ -1745,15 +1742,21 @@ impl<'gc> EditText<'gc> {
                 };
                 self.set_selection(Some(TextSelection::for_position(new_pos)));
             }
-            TextControlCode::MoveRight
-            | TextControlCode::MoveRightWord
-            | TextControlCode::MoveRightLine
-            | TextControlCode::MoveRightDocument => {
+            TextControlCode::MoveRight | TextControlCode::MoveRightWord => {
                 let new_pos = if selection.is_caret() && selection.to < self.text().len() {
                     self.find_new_position(control_code, selection.to)
                 } else {
                     selection.end()
                 };
+                self.set_selection(Some(TextSelection::for_position(new_pos)));
+            }
+            TextControlCode::MoveLeftLine
+            | TextControlCode::MoveLeftDocument
+            | TextControlCode::MoveRightLine
+            | TextControlCode::MoveRightDocument => {
+                // Unlike the arrow keys, Home and End don't collapse a selection:
+                // they move from the caret, like Flash Player.
+                let new_pos = self.find_new_position(control_code, selection.to);
                 self.set_selection(Some(TextSelection::for_position(new_pos)));
             }
             TextControlCode::SelectLeft
