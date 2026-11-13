@@ -477,11 +477,40 @@ impl RuffleInstanceBuilder {
             url.to_string()
         };
 
+        let is_bold = face.is_bold();
+        // Note: do not use is_italic() here, as we don't care about italic_angle
+        let is_italic = face.style() != ttf_parser::Style::Normal;
+
+        // Flash Player looks device fonts up by family name and style ("Verdana" + bold), while
+        // the full name of a bold face is usually "Verdana Bold". Register the face under its
+        // family name too, so that such lookups find the right style instead of the regular face.
+        let family = [
+            ttf_parser::name_id::TYPOGRAPHIC_FAMILY,
+            ttf_parser::name_id::FAMILY,
+        ]
+        .into_iter()
+        .find_map(|id| {
+            face.names()
+                .into_iter()
+                .filter(|n| n.is_unicode() && n.name_id == id)
+                .find_map(|n| n.to_string())
+        });
+        if let Some(family) = family
+            && family != name
+        {
+            player.register_device_font(FontDefinition::FontFile {
+                name: family,
+                is_bold,
+                is_italic,
+                data: FontFileData::new(bytes.clone()),
+                index,
+            });
+        }
+
         player.register_device_font(FontDefinition::FontFile {
             name,
-            is_bold: face.is_bold(),
-            // Note: do not use is_italic() here, as we don't care about italic_angle
-            is_italic: face.style() != ttf_parser::Style::Normal,
+            is_bold,
+            is_italic,
             data: FontFileData::new(bytes),
             index,
         });
