@@ -163,6 +163,10 @@ pub struct EditTextData<'gc> {
     /// How many lines down the text is offset by. 1-based index.
     scroll: Cell<usize>,
 
+    /// The x position the caret keeps when moving up and down between lines,
+    /// along with the caret position it applies to.
+    vertical_goal: Cell<Option<(usize, Twips)>>,
+
     /// The limit of characters that can be manually input by the user.
     /// Doesn't affect script-triggered modifications.
     max_chars: Cell<i32>,
@@ -342,6 +346,7 @@ impl<'gc> EditText<'gc> {
                 render_settings: Default::default(),
                 hscroll: Cell::new(0.0),
                 scroll: Cell::new(1),
+                vertical_goal: Cell::new(None),
                 max_chars: Cell::new(swf_tag.max_length().unwrap_or_default() as i32),
                 mouse_wheel_enabled: Cell::new(true),
                 is_fte: Cell::new(false),
@@ -1706,6 +1711,10 @@ impl<'gc> EditText<'gc> {
             | TextControlCode::SelectRightWord
             | TextControlCode::SelectRightLine
             | TextControlCode::SelectRightDocument
+            | TextControlCode::SelectUp
+            | TextControlCode::SelectUpPage
+            | TextControlCode::SelectDown
+            | TextControlCode::SelectDownPage
             | TextControlCode::SelectAll => self.is_selectable(),
             TextControlCode::Copy | TextControlCode::Cut => {
                 !self.is_password() && !selection.is_caret()
@@ -1773,6 +1782,20 @@ impl<'gc> EditText<'gc> {
                     let new_pos = self.find_new_position(control_code, selection.to);
                     self.set_selection(Some(TextSelection::for_range(selection.from, new_pos)))
                 }
+            }
+            TextControlCode::MoveUp
+            | TextControlCode::MoveUpPage
+            | TextControlCode::MoveDown
+            | TextControlCode::MoveDownPage => {
+                let new_pos = self.find_vertical_position(control_code, selection.to);
+                self.set_selection(Some(TextSelection::for_position(new_pos)));
+            }
+            TextControlCode::SelectUp
+            | TextControlCode::SelectUpPage
+            | TextControlCode::SelectDown
+            | TextControlCode::SelectDownPage => {
+                let new_pos = self.find_vertical_position(control_code, selection.to);
+                self.set_selection(Some(TextSelection::for_range(selection.from, new_pos)));
             }
             TextControlCode::SelectAll => {
                 self.set_selection(Some(TextSelection::for_range(0, self.text().len())));
@@ -1961,6 +1984,84 @@ impl<'gc> EditText<'gc> {
             }
             TextControlCode::SelectLeftDocument | TextControlCode::MoveLeftDocument => 0,
             _ => unreachable!(),
+        }
+    }
+
+    /// Find the caret position one line (or one page) above or below `pos`.
+    ///
+    /// Like in Flash Player, the caret keeps its x position while moving
+    /// through shorter lines, stays put on the first (last) line when moving
+    /// one line up (down), and goes to the start (end) of the text when moving
+    /// one page beyond the first (last) line. A page is the number of visible lines.
+    fn find_vertical_position(self, control_code: TextControlCode, pos: usize) -> usize {
+        let text_len = self.text().len();
+        let (up, page) = match control_code {
+            TextControlCode::MoveUp | TextControlCode::SelectUp => (true, false),
+            TextControlCode::MoveUpPage | TextControlCode::SelectUpPage => (true, true),
+            TextControlCode::MoveDown | TextControlCode::SelectDown => (false, false),
+            TextControlCode::MoveDownPage | TextControlCode::SelectDownPage => (false, true),
+            _ => unreachable!(),
+        };
+        let distance = if page {
+            (self.bottom_scroll() + 1)
+                .saturating_sub(self.scroll())
+                .max(1)
+        } else {
+            1
+        };
+
+        let layout = self.0.layout.borrow();
+        let lines = layout.lines();
+        let Some(line_index) = layout
+            .find_line_index_by_position(pos)
+            .or_else(|| lines.len().checked_sub(1).filter(|_| pos >= text_len))
+        else {
+            return pos;
+        };
+
+        let target_index = if up {
+            match line_index.checked_sub(distance) {
+                Some(index) => index,
+                None if page => return 0,
+                None => return pos,
+            }
+        } else {
+            let index = line_index + distance;
+            if index >= lines.len() {
+                return if page { text_len } else { pos };
+            }
+            index
+        };
+
+        let goal_x = match self.0.vertical_goal.get() {
+            Some((goal_pos, x)) if goal_pos == pos => x,
+            _ => Self::caret_x_in_line(&lines[line_index], pos),
+        };
+
+        let target = &lines[target_index];
+        // The caret cannot be placed after the line's last character (its
+        // newline or the space where it wraps), except on the last line.
+        let last = if target_index + 1 == lines.len() {
+            target.end().min(text_len)
+        } else {
+            target.end().saturating_sub(1).max(target.start())
+        };
+        let new_pos = (target.start()..=last)
+            .min_by_key(|&p| (Self::caret_x_in_line(target, p) - goal_x).get().abs())
+            .unwrap_or(pos);
+
+        self.0.vertical_goal.set(Some((new_pos, goal_x)));
+        new_pos
+    }
+
+    /// The x position (in layout coordinates) of a caret placed at `pos` on `line`.
+    fn caret_x_in_line(line: &LayoutLine<'gc>, pos: usize) -> Twips {
+        if let Some((start, _)) = line.char_x_bounds(pos) {
+            start
+        } else if let Some((_, end)) = pos.checked_sub(1).and_then(|p| line.char_x_bounds(p)) {
+            end
+        } else {
+            line.bounds().offset_x()
         }
     }
 

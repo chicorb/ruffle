@@ -57,6 +57,16 @@ pub fn winit_to_ruffle_text_control(
         Key::Named(NamedKey::End) if ctrl_cmd => Some(TextControlCode::MoveRightDocument),
         Key::Named(NamedKey::End) if shift => Some(TextControlCode::SelectRightLine),
         Key::Named(NamedKey::End) => Some(TextControlCode::MoveRightLine),
+        Key::Named(NamedKey::ArrowUp) if !ctrl_cmd && shift => Some(TextControlCode::SelectUp),
+        Key::Named(NamedKey::ArrowUp) if !ctrl_cmd => Some(TextControlCode::MoveUp),
+        Key::Named(NamedKey::ArrowDown) if !ctrl_cmd && shift => Some(TextControlCode::SelectDown),
+        Key::Named(NamedKey::ArrowDown) if !ctrl_cmd => Some(TextControlCode::MoveDown),
+        Key::Named(NamedKey::PageUp) if !ctrl_cmd && shift => Some(TextControlCode::SelectUpPage),
+        Key::Named(NamedKey::PageUp) if !ctrl_cmd => Some(TextControlCode::MoveUpPage),
+        Key::Named(NamedKey::PageDown) if !ctrl_cmd && shift => {
+            Some(TextControlCode::SelectDownPage)
+        }
+        Key::Named(NamedKey::PageDown) if !ctrl_cmd => Some(TextControlCode::MoveDownPage),
         _ => None,
     }
 }

@@ -1,0 +1,34 @@
+case 0: lines=12 visible=4 caret=2:5
+  Up: caret=1:5 sel=1:5-1:5
+  Up: caret=0:5 sel=0:5-0:5
+  Up: caret=0:5 sel=0:5-0:5
+  Down: caret=1:5 sel=1:5-1:5
+  Down: caret=2:5 sel=2:5-2:5
+  Shift+Down: caret=3:5 sel=2:5-3:5
+  Shift+Up: caret=2:5 sel=2:5-2:5
+  Shift+Up: caret=1:5 sel=1:5-2:5
+case 1: lines=12 visible=4 caret=6:5
+  PageUp: caret=2:5 sel=2:5-2:5
+  PageDown: caret=6:5 sel=6:5-6:5
+  PageDown: caret=10:5 sel=10:5-10:5
+  PageDown: caret=11:10 sel=11:10-11:10
+  Shift+PageUp: caret=7:10 sel=7:10-11:10
+  PageDown: caret=11:10 sel=11:10-11:10
+  PageDown: caret=11:10 sel=11:10-11:10
+case 2: lines=4 visible=4 caret=0:8
+  Down: caret=1:3 sel=1:3-1:3
+  Down: caret=2:8 sel=2:8-2:8
+  Down: caret=3:8 sel=3:8-3:8
+  Down: caret=3:8 sel=3:8-3:8
+  Up: caret=2:8 sel=2:8-2:8
+  Up: caret=1:3 sel=1:3-1:3
+case 3: lines=2 visible=2 caret=1:10
+  Up: caret=0:10 sel=0:10-0:10
+  Up: caret=0:10 sel=0:10-0:10
+  Down: caret=1:10 sel=1:10-1:10
+  Down: caret=1:10 sel=1:10-1:10
+case 4: lines=7 visible=4 caret=1:7
+  Up: caret=0:7 sel=0:7-0:7
+  Down: caret=1:7 sel=1:7-1:7
+  Down: caret=2:7 sel=2:7-2:7
+  Shift+Up: caret=1:7 sel=1:7-2:7

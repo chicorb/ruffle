@@ -325,6 +325,14 @@ pub fn web_to_ruffle_text_control(
             "End" if ctrl_key => Some(TextControlCode::MoveRightDocument),
             "End" if shift_key => Some(TextControlCode::SelectRightLine),
             "End" => Some(TextControlCode::MoveRightLine),
+            "ArrowUp" if !ctrl_key && shift_key => Some(TextControlCode::SelectUp),
+            "ArrowUp" if !ctrl_key => Some(TextControlCode::MoveUp),
+            "ArrowDown" if !ctrl_key && shift_key => Some(TextControlCode::SelectDown),
+            "ArrowDown" if !ctrl_key => Some(TextControlCode::MoveDown),
+            "PageUp" if !ctrl_key && shift_key => Some(TextControlCode::SelectUpPage),
+            "PageUp" if !ctrl_key => Some(TextControlCode::MoveUpPage),
+            "PageDown" if !ctrl_key && shift_key => Some(TextControlCode::SelectDownPage),
+            "PageDown" if !ctrl_key => Some(TextControlCode::MoveDownPage),
             _ => None,
         }
     }
