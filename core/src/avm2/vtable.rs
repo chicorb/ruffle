@@ -10,7 +10,7 @@ use crate::avm2::traits::{Trait, TraitKind};
 use crate::avm2::value::Value;
 use crate::avm2::{Class, Multiname, Namespace, QName};
 use crate::context::UpdateContext;
-use crate::string::{AvmString, StringContext};
+use crate::string::{AvmString, StringContext, WStr};
 use gc_arena::barrier::{field, unlock};
 use gc_arena::lock::Lock;
 use gc_arena::{Collect, Gc, Mutation};
@@ -128,6 +128,29 @@ impl<'gc> VTable<'gc> {
             .disp_metadata_table
             .get(&disp_id)
             .map(|v| &**v)
+    }
+
+    /// Whether the given property is marked `[Transient]`, which keeps it
+    /// out of AMF serialization. For an accessor, the metadata may be on
+    /// the getter or on the setter.
+    pub fn is_transient(self, property: Property) -> bool {
+        let is_transient = |metadata: Option<&[Metadata<'gc>]>| {
+            metadata.is_some_and(|metadata| {
+                metadata
+                    .iter()
+                    .any(|m| &*m.name() == WStr::from_units(b"Transient"))
+            })
+        };
+        match property {
+            Property::Slot { slot_id } | Property::ConstSlot { slot_id } => {
+                is_transient(self.get_metadata_for_slot(slot_id))
+            }
+            Property::Virtual { get, set } => {
+                get.is_some_and(|disp_id| is_transient(self.get_metadata_for_disp(disp_id)))
+                    || set.is_some_and(|disp_id| is_transient(self.get_metadata_for_disp(disp_id)))
+            }
+            Property::Method { .. } => false,
+        }
     }
 
     pub fn slot_class_name(

@@ -1,0 +1,2 @@
+bytes 55
+read Item=true zeta=7 alpha=A middle=true marked=null accessor=ACCESSOR markedAccessor=null markedSetter=SETTER

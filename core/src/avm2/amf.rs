@@ -270,6 +270,9 @@ pub fn recursive_serialize<'gc>(
             {
                 continue;
             }
+            if vtable.is_transient(prop) {
+                continue;
+            }
 
             let value = Value::from(obj).get_public_property(name, activation)?;
             let name = name.to_utf8_lossy().to_string();

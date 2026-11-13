@@ -26,6 +26,11 @@ pub struct Metadata<'gc> {
 }
 
 impl<'gc> Metadata<'gc> {
+    /// The name of this metadata, e.g. `Transient` for `[Transient]`.
+    pub fn name(&self) -> AvmString<'gc> {
+        self.name
+    }
+
     // Converts an AbcMetadata into a Metadata by resolving all the indexes.
     pub fn from_abc_index(
         activation: &mut Activation<'_, 'gc>,
