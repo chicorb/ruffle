@@ -1715,6 +1715,13 @@ impl<'gc> EditText<'gc> {
         }
     }
 
+    /// Flash Player stores line breaks as `\r`: in text inserted into a field
+    /// (appended, replaced or pasted), both `\r\n` and `\n` become `\r`.
+    pub fn newlines_to_cr(text: &WStr) -> WString {
+        text.replace(WStr::from_units(b"\r\n"), WStr::from_units(b"\r"))
+            .replace(b'\n', WStr::from_units(b"\r"))
+    }
+
     pub fn text_control_input(
         self,
         control_code: TextControlCode,
@@ -1791,6 +1798,7 @@ impl<'gc> EditText<'gc> {
                     break 'paste;
                 }
 
+                let text = text.replace("\r\n", "\r").replace('\n', "\r");
                 self.text_input(text, context);
             }
             TextControlCode::Cut => {
