@@ -236,8 +236,17 @@ export class InnerPlayer {
         this.virtualKeyboard = this.shadow.getElementById(
             "virtual-keyboard",
         )! as unknown as HTMLInputElement;
+        this.virtualKeyboard.addEventListener("input", (event) => {
+            // While a dead key or an input method is composing a character, the field
+            // holds provisional text (e.g. "~" before "ã"). Only the composed text,
+            // delivered on compositionend, must reach the movie.
+            if ((event as InputEvent).isComposing) {
+                return;
+            }
+            this.virtualKeyboardInput();
+        });
         this.virtualKeyboard.addEventListener(
-            "input",
+            "compositionend",
             this.virtualKeyboardInput.bind(this),
         );
         this.saveManager = this.shadow.getElementById(
