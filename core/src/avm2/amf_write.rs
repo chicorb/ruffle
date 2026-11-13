@@ -359,17 +359,18 @@ impl<'gc> Amf3Writer<'_, 'gc> {
         Ok(())
     }
 
-    /// The sealed members written for an instance: public read-write properties, sorted by
-    /// name to match `amf.rs` (Flash Player uses declaration order).
+    /// The sealed members written for an instance: public read-write properties that are not
+    /// `[Transient]`, sorted by name to match `amf.rs` (Flash Player uses its own hash order).
     fn sealed_members(o: Object<'gc>) -> Vec<AvmString<'gc>> {
-        let mut props = o
-            .vtable()
+        let vtable = o.vtable();
+        let mut props = vtable
             .public_properties()
             .filter(|(_, prop)| match prop {
                 Property::Method { .. } => false,
                 Property::Virtual { get, set } => get.is_some() && set.is_some(),
                 _ => true,
             })
+            .filter(|(_, prop)| !vtable.is_transient(*prop))
             .map(|(name, _)| name)
             .collect::<Vec<_>>();
         props.sort();
