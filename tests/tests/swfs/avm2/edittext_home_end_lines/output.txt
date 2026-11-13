@@ -1,0 +1,12 @@
+case 0 Home: sel=S,S caret=S (9,9)
+case 0 End: sel=E,E caret=E (17,17)
+case 0 Shift+End: sel=P,E caret=E (12,17)
+case 0 Shift+Home: sel=S,P caret=S (9,12)
+case 1 Home: sel=S,S caret=S (9,9)
+case 1 End: sel=E,E caret=E (17,17)
+case 1 Shift+End: sel=P,E caret=E (12,17)
+case 1 Shift+Home: sel=S,P caret=S (9,12)
+case 2 Home: sel=S,S caret=S
+case 2 End: sel=E,E caret=E
+case 2 Shift+End: sel=P,E caret=E
+case 2 Shift+Home: sel=S,P caret=S
