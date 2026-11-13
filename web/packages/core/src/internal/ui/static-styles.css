@@ -1,6 +1,7 @@
 :host {
     all: initial;
     pointer-events: inherit;
+    visibility: inherit;
 
     --ruffle-blue: #37528c;
     --ruffle-blue-dark: #253559;
