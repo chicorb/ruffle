@@ -1,0 +1,9 @@
+Child constructed (1), helper says hello
+first loaded: Child
+Child constructed (2), helper says hello
+second loaded: Child
+same root class: true
+same ChildClip: true, same as here: true
+Child.constructed: 2
+new ChildClip: 40x20 children=1 label=child clip
+done
