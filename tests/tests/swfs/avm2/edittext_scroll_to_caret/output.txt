@@ -10,5 +10,6 @@ a End: lines=6 caretLine=5 scrollV=3 bottomScrollV=6
 a Home: lines=6 caretLine=0 scrollV=1 bottomScrollV=4
 a PageDown: lines=6 caretLine=4 scrollV=3 bottomScrollV=6
 b typed 36 characters, caret hidden after 0 of them
+scroll position back to the start at a change event: 0 times
 b Home: caret=0 visible=true scrolled=false
 b End: caret=36 visible=true scrolled=true

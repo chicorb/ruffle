@@ -20,6 +20,9 @@ public class Test extends Sprite {
     private var bLength:int = 0;
     private var bChanges:int = 0;
     private var bHidden:int = 0;
+    private var lastScrollV:int = 1;
+    private var lastScrollH:int = 0;
+    private var resets:int = 0;
 
     public function Test() {
         a = field(5, 5, 190, 70, true);
@@ -30,6 +33,14 @@ public class Test extends Sprite {
             a.setSelection(a.length, a.length);
         });
         a.addEventListener(KeyboardEvent.KEY_UP, keyUpA);
+        // While typing, the scroll position must not go back to the top/left at each change.
+        // (the values to compare with are taken after each key and each frame)
+        a.addEventListener(Event.CHANGE, function(e:Event):void {
+            if (lastScrollV > 1 && a.scrollV == 1) resets++;
+        });
+        b.addEventListener(Event.CHANGE, function(e:Event):void {
+            if (lastScrollH > 0 && b.scrollH == 0) resets++;
+        });
         b.addEventListener(KeyboardEvent.KEY_UP, keyUpB);
         addEventListener(Event.ENTER_FRAME, enterFrame);
         stage.focus = a;
@@ -78,6 +89,7 @@ public class Test extends Sprite {
             return;
         }
         stateA(keyName(e));
+        lastScrollV = a.scrollV;
         if (e.keyCode == 34) {
             stage.focus = b;
             b.setSelection(0, 0);
@@ -98,6 +110,7 @@ public class Test extends Sprite {
     }
 
     private function enterFrame(e:Event):void {
+        lastScrollH = b.scrollH;
         if (b.length != bLength) {
             bLength = b.length;
             bChanges++;
@@ -113,6 +126,7 @@ public class Test extends Sprite {
         }
         if (e.keyCode == 36) {
             out("b typed " + b.length + " characters, caret hidden after " + bHidden + " of them");
+            out("scroll position back to the start at a change event: " + resets + " times");
         }
         out("b " + keyName(e) + ": caret=" + b.caretIndex + " visible=" + bVisible() + " scrolled=" + (b.scrollH > 0));
     }

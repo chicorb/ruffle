@@ -1743,6 +1743,7 @@ impl<'gc> EditText<'gc> {
         };
 
         let mut changed = false;
+        let (scroll, hscroll) = (self.scroll(), self.hscroll());
         let is_selectable = self.is_selectable();
         match control_code {
             TextControlCode::Enter => {
@@ -1869,6 +1870,7 @@ impl<'gc> EditText<'gc> {
             }
         }
         if changed {
+            self.restore_scroll(scroll, hscroll);
             let mut activation = Avm1Activation::from_nothing(
                 context,
                 ActivationIdentifier::root("[Propagate Text Binding]"),
@@ -2090,6 +2092,14 @@ impl<'gc> EditText<'gc> {
         self.set_scroll(new_scroll as f64, false, context);
     }
 
+    /// Put back the scroll position that a text change made by the user
+    /// reset (relayout scrolls back to the top). Flash Player keeps it.
+    fn restore_scroll(self, scroll: usize, hscroll: f64) {
+        self.0.scroll.set(scroll.clamp(1, self.maxscroll()));
+        self.0.hscroll.set(hscroll.clamp(0.0, self.maxhscroll()));
+        self.invalidate_cached_bitmap();
+    }
+
     /// Scroll the text so that the caret is visible.
     ///
     /// Flash Player does this after the user types or moves the caret.
@@ -2290,7 +2300,9 @@ impl<'gc> EditText<'gc> {
             text = &text[0..self.available_chars()];
         }
 
+        let (scroll, hscroll) = (self.scroll(), self.hscroll());
         self.replace_text(selection.start(), selection.end(), text, context);
+        self.restore_scroll(scroll, hscroll);
         let new_pos = selection.start() + text.len();
         self.set_selection(Some(TextSelection::for_position(new_pos)));
 
