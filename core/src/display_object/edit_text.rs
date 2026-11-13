@@ -1048,6 +1048,11 @@ impl<'gc> EditText<'gc> {
 
     /// The lowest visible line of text
     pub fn bottom_scroll(self) -> usize {
+        self.bottom_scroll_at(self.0.scroll.get())
+    }
+
+    /// The lowest visible line of text, when scrolled to `scroll`.
+    fn bottom_scroll_at(self, scroll: usize) -> usize {
         let layout = self.0.layout.borrow();
         let lines = layout.lines();
 
@@ -1056,7 +1061,7 @@ impl<'gc> EditText<'gc> {
         }
 
         let scroll_offset = lines
-            .get(self.0.scroll.get() - 1)
+            .get(scroll.saturating_sub(1))
             .map_or(Twips::ZERO, |l| l.offset_y());
         let target = self.0.bounds.get().height() + scroll_offset - Self::GUTTER * 2;
 
@@ -1789,6 +1794,7 @@ impl<'gc> EditText<'gc> {
             | TextControlCode::MoveDownPage => {
                 let new_pos = self.find_vertical_position(control_code, selection.to);
                 self.set_selection(Some(TextSelection::for_position(new_pos)));
+                self.scroll_by_page(control_code, context);
             }
             TextControlCode::SelectUp
             | TextControlCode::SelectUpPage
@@ -1796,6 +1802,7 @@ impl<'gc> EditText<'gc> {
             | TextControlCode::SelectDownPage => {
                 let new_pos = self.find_vertical_position(control_code, selection.to);
                 self.set_selection(Some(TextSelection::for_range(selection.from, new_pos)));
+                self.scroll_by_page(control_code, context);
             }
             TextControlCode::SelectAll => {
                 self.set_selection(Some(TextSelection::for_range(0, self.text().len())));
@@ -1869,6 +1876,9 @@ impl<'gc> EditText<'gc> {
             );
             self.propagate_text_binding(&mut activation);
             self.on_changed(&mut activation);
+        }
+        if control_code != TextControlCode::Copy {
+            self.scroll_to_caret(context);
         }
     }
 
@@ -2002,22 +2012,13 @@ impl<'gc> EditText<'gc> {
             TextControlCode::MoveDownPage | TextControlCode::SelectDownPage => (false, true),
             _ => unreachable!(),
         };
-        let distance = if page {
-            (self.bottom_scroll() + 1)
-                .saturating_sub(self.scroll())
-                .max(1)
-        } else {
-            1
-        };
+        let distance = if page { self.page_lines() } else { 1 };
 
-        let layout = self.0.layout.borrow();
-        let lines = layout.lines();
-        let Some(line_index) = layout
-            .find_line_index_by_position(pos)
-            .or_else(|| lines.len().checked_sub(1).filter(|_| pos >= text_len))
-        else {
+        let Some(line_index) = self.caret_line_index(pos) else {
             return pos;
         };
+        let layout = self.0.layout.borrow();
+        let lines = layout.lines();
 
         let target_index = if up {
             match line_index.checked_sub(distance) {
@@ -2052,6 +2053,96 @@ impl<'gc> EditText<'gc> {
 
         self.0.vertical_goal.set(Some((new_pos, goal_x)));
         new_pos
+    }
+
+    /// The number of lines PageUp and PageDown move by: the visible lines.
+    fn page_lines(self) -> usize {
+        (self.bottom_scroll() + 1)
+            .saturating_sub(self.scroll())
+            .max(1)
+    }
+
+    /// The index of the laid out line where a caret at `pos` is shown.
+    fn caret_line_index(self, pos: usize) -> Option<usize> {
+        let layout = self.0.layout.borrow();
+        layout.find_line_index_by_position(pos).or_else(|| {
+            // The caret at the end of the text is on the last line.
+            if pos >= self.text().len() {
+                layout.lines().len().checked_sub(1)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// PageUp and PageDown also scroll the text by a page, as in Flash Player.
+    fn scroll_by_page(self, control_code: TextControlCode, context: &mut UpdateContext<'gc>) {
+        let scroll = self.scroll();
+        let new_scroll = match control_code {
+            TextControlCode::MoveUpPage | TextControlCode::SelectUpPage => {
+                scroll.saturating_sub(self.page_lines()).max(1)
+            }
+            TextControlCode::MoveDownPage | TextControlCode::SelectDownPage => {
+                scroll + self.page_lines()
+            }
+            _ => return,
+        };
+        self.set_scroll(new_scroll as f64, false, context);
+    }
+
+    /// Scroll the text so that the caret is visible.
+    ///
+    /// Flash Player does this after the user types or moves the caret.
+    /// It scrolls vertically by as few lines as possible, and horizontally
+    /// by steps of a quarter of the visible width.
+    fn scroll_to_caret(self, context: &mut UpdateContext<'gc>) {
+        let Some(selection) = self.selection() else {
+            return;
+        };
+        let pos = selection.to;
+        let Some(line_index) = self.caret_line_index(pos) else {
+            return;
+        };
+
+        let line = line_index + 1;
+        let mut scroll = self.scroll();
+        if line < scroll {
+            scroll = line;
+        } else {
+            let max_scroll = self.maxscroll();
+            while scroll < max_scroll && line > self.bottom_scroll_at(scroll) {
+                scroll += 1;
+            }
+        }
+        if scroll != self.scroll() {
+            self.set_scroll(scroll as f64, false, context);
+        }
+
+        if self.is_word_wrap() {
+            return;
+        }
+        let caret_x = {
+            let layout = self.0.layout.borrow();
+            let Some(line) = layout.lines().get(line_index) else {
+                return;
+            };
+            Self::caret_x_in_line(line, pos).to_pixels()
+        };
+        let window_width = (self.0.bounds.get().width() - Self::GUTTER * 2)
+            .max(Twips::ZERO)
+            .to_pixels();
+        let step = (window_width / 4.0).floor().max(1.0);
+        let max_hscroll = self.maxhscroll();
+        let mut hscroll = self.hscroll();
+        while caret_x > hscroll + window_width && hscroll < max_hscroll {
+            hscroll = (hscroll + step).min(max_hscroll);
+        }
+        while caret_x < hscroll && hscroll > 0.0 {
+            hscroll = (hscroll - step).max(0.0);
+        }
+        if hscroll != self.hscroll() {
+            self.set_hscroll(hscroll);
+        }
     }
 
     /// The x position (in layout coordinates) of a caret placed at `pos` on `line`.
@@ -2210,6 +2301,7 @@ impl<'gc> EditText<'gc> {
         );
         self.propagate_text_binding(&mut activation);
         self.on_changed(&mut activation);
+        self.scroll_to_caret(activation.context);
     }
 
     fn initialize_listeners(self, activation: &mut Avm1Activation<'_, 'gc>) {
