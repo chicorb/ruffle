@@ -331,7 +331,13 @@ struct EventHandler<'gc> {
 
 impl<'gc> EventHandler<'gc> {
     fn new(handler: FunctionObject<'gc>, use_capture: bool, use_weak_reference: bool) -> Self {
-        let handler = if use_weak_reference {
+        // Deliberate difference with Flash Player: only bound methods are held
+        // weakly. A closure that only a weak listener references (as in
+        // `addEventListener(type, function (e) {...}, false, 0, true)`) is
+        // garbage in Flash Player too, and stops being called whenever its
+        // collector happens to run; keeping it avoids losing events because
+        // our collector runs at different times.
+        let handler = if use_weak_reference && handler.is_bound_method() {
             HandlerRef::Weak(FunctionObjectWeak(Gc::downgrade(handler.0)))
         } else {
             HandlerRef::Strong(handler)
