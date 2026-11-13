@@ -1,0 +1,87 @@
+// Tagged (class)
+<type name="Tagged" base="Class" isDynamic="true" isFinal="true" isStatic="true">
+  <accessor name="prototype" access="readonly" type="*" declaredBy="Class"/>
+  <extendsClass type="Class"/>
+  <extendsClass type="Object"/>
+  <factory type="Tagged">
+    <extendsClass type="Object"/>
+    <metadata name="Event">
+      <arg key="name" value="change"/>
+      <arg key="type" value="flash.events.Event"/>
+    </metadata>
+    <metadata name="Marker"/>
+    <metadata name="Metadata">
+      <arg key="name" value="Event"/>
+      <arg key="types" value="class"/>
+    </metadata>
+    <variable name="member" type="int">
+      <metadata name="Inject"/>
+    </variable>
+  </factory>
+</type>
+// Tagged (instance)
+<type name="Tagged" base="Object" isDynamic="false" isFinal="false" isStatic="false">
+  <extendsClass type="Object"/>
+  <metadata name="Event">
+    <arg key="name" value="change"/>
+    <arg key="type" value="flash.events.Event"/>
+  </metadata>
+  <metadata name="Marker"/>
+  <metadata name="Metadata">
+    <arg key="name" value="Event"/>
+    <arg key="types" value="class"/>
+  </metadata>
+  <variable name="member" type="int">
+    <metadata name="Inject"/>
+  </variable>
+</type>
+// SubTagged (class)
+<type name="SubTagged" base="Class" isDynamic="true" isFinal="true" isStatic="true">
+  <accessor name="prototype" access="readonly" type="*" declaredBy="Class"/>
+  <extendsClass type="Class"/>
+  <extendsClass type="Object"/>
+  <factory type="SubTagged">
+    <extendsClass type="Object"/>
+    <extendsClass type="Tagged"/>
+    <metadata name="SubMarker">
+      <arg key="key" value="value"/>
+    </metadata>
+    <variable name="member" type="int">
+      <metadata name="Inject"/>
+    </variable>
+  </factory>
+</type>
+// SubTagged (instance)
+<type name="SubTagged" base="Tagged" isDynamic="false" isFinal="false" isStatic="false">
+  <extendsClass type="Object"/>
+  <extendsClass type="Tagged"/>
+  <metadata name="SubMarker">
+    <arg key="key" value="value"/>
+  </metadata>
+  <variable name="member" type="int">
+    <metadata name="Inject"/>
+  </variable>
+</type>
+// Plain (class)
+<type name="Plain" base="Class" isDynamic="true" isFinal="true" isStatic="true">
+  <accessor name="prototype" access="readonly" type="*" declaredBy="Class"/>
+  <extendsClass type="Class"/>
+  <extendsClass type="Object"/>
+  <factory type="Plain">
+    <extendsClass type="Object"/>
+  </factory>
+</type>
+// ITagged (interface)
+<type name="ITagged" base="Class" isDynamic="true" isFinal="true" isStatic="true">
+  <accessor name="prototype" access="readonly" type="*" declaredBy="Class"/>
+  <extendsClass type="Class"/>
+  <extendsClass type="Object"/>
+  <factory type="ITagged">
+    <metadata name="InterfaceMarker">
+      <arg key="a" value="1"/>
+      <arg key="b" value="2"/>
+    </metadata>
+  </factory>
+</type>
+factory [Metadata] tags on Tagged: 1
+instance [Metadata] tags on Tagged: 1
