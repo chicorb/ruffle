@@ -10,6 +10,7 @@ use crate::avm2::error::{
     make_error_1103, make_error_1107, make_error_1110, make_error_1111,
 };
 use crate::avm2::function::FunctionArgs;
+use crate::avm2::metadata::Metadata;
 use crate::avm2::method::{Method, MethodAssociation, NativeMethodImpl};
 use crate::avm2::object::{ClassObject, Object, scriptobject_allocator};
 use crate::avm2::script::TranslationUnit;
@@ -151,6 +152,11 @@ pub struct ClassData<'gc> {
     /// The class' vtable.
     vtable: OnceLock<VTable<'gc>>,
 
+    /// Metadata declared on the class itself (e.g. `[Event(name="change")]` above
+    /// `class Foo`). Flash Player reports it with the instance traits in `describeType`,
+    /// so it is only set on instance classes. Not inherited by subclasses.
+    metadata: OnceLock<Box<[Metadata<'gc>]>>,
+
     /// The customization point for `Class(args...)` without `new`
     /// If None, a simple coercion is done.
     #[collect(require_static)]
@@ -229,6 +235,7 @@ impl<'gc> ClassData<'gc> {
             instance_init: None,
             traits: OnceLock::new(),
             vtable: OnceLock::new(),
+            metadata: OnceLock::new(),
             call_handler: None,
             custom_constructor: None,
             linked_class: Lock::new(ClassLink::Unlinked),
@@ -994,6 +1001,21 @@ impl<'gc> Class<'gc> {
         }
 
         false
+    }
+
+    /// Metadata declared on the class itself; empty if there is none.
+    pub fn metadata(self) -> &'gc [Metadata<'gc>] {
+        Gc::as_ref(self.0)
+            .metadata
+            .get()
+            .map(|m| &m[..])
+            .unwrap_or(&[])
+    }
+
+    /// Set the metadata declared on the class itself. Only the first call has an effect.
+    pub fn set_metadata(self, mc: &Mutation<'gc>, metadata: Box<[Metadata<'gc>]>) {
+        let write = Gc::write(mc, self.0);
+        let _ = unlock!(write, ClassData, metadata).set(metadata);
     }
 
     pub fn vtable(self) -> VTable<'gc> {
