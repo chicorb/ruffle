@@ -79,6 +79,14 @@ pub fn perform_automated_event(evt: &AutomatedEvent, player: &mut Player) {
                 InputTextControlCode::SelectRightDocument => {
                     RuffleTextControlCode::SelectRightDocument
                 }
+                InputTextControlCode::MoveUp => RuffleTextControlCode::MoveUp,
+                InputTextControlCode::MoveUpPage => RuffleTextControlCode::MoveUpPage,
+                InputTextControlCode::MoveDown => RuffleTextControlCode::MoveDown,
+                InputTextControlCode::MoveDownPage => RuffleTextControlCode::MoveDownPage,
+                InputTextControlCode::SelectUp => RuffleTextControlCode::SelectUp,
+                InputTextControlCode::SelectUpPage => RuffleTextControlCode::SelectUpPage,
+                InputTextControlCode::SelectDown => RuffleTextControlCode::SelectDown,
+                InputTextControlCode::SelectDownPage => RuffleTextControlCode::SelectDownPage,
                 InputTextControlCode::SelectAll => RuffleTextControlCode::SelectAll,
                 InputTextControlCode::Copy => RuffleTextControlCode::Copy,
                 InputTextControlCode::Paste => RuffleTextControlCode::Paste,
