@@ -1205,7 +1205,7 @@ pub fn sort_on<'gc>(
 
     let first_option = options.get(0).copied().unwrap_or_else(SortOptions::empty)
         & (SortOptions::UNIQUE_SORT | SortOptions::RETURN_INDEXED_ARRAY);
-    let mut values = if let Some(values) = extract_array_values(activation, this.into())? {
+    let values = if let Some(values) = extract_array_values(activation, this.into())? {
         values
             .iter()
             .enumerate()
@@ -1222,16 +1222,19 @@ pub fn sort_on<'gc>(
         );
     }
 
-    let unique_satisfied = sort_inner(
+    // Flash Player sorts null elements after all the others (even after the
+    // undefined ones), instead of failing on them.
+    let (mut values, nulls): (Vec<_>, Vec<_>) = values
+        .into_iter()
+        .partition(|(_, value)| !matches!(value, Value::Null));
+
+    let mut unique_satisfied = sort_inner(
         activation,
         &mut values,
         first_option,
         constrain(|activation, a, b| {
             for (field_name, options) in field_names.iter().zip(options.iter()) {
-                // note: these are incorrect: pretty sure
-                // if the object is null/undefined or does not have the field,
-                // it's treated as if the field's value was undefined.
-                // TODO: verify this and fix it
+                // Null and undefined elements never get here.
                 let a_object = a.null_check(activation, None)?;
                 let a_field = a_object.get_public_property(*field_name, activation)?;
 
@@ -1260,6 +1263,11 @@ pub fn sort_on<'gc>(
             Ok(Ordering::Equal)
         }),
     )?;
+
+    if nulls.len() > 1 && first_option.contains(SortOptions::UNIQUE_SORT) {
+        unique_satisfied = false;
+    }
+    values.extend(nulls);
 
     sort_postprocess(activation, this, first_option, unique_satisfied, values)
 }
