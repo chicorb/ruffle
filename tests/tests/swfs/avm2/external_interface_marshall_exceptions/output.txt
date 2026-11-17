@@ -1,0 +1,19 @@
+// read inside try/catch
+false
+// write inside try/catch
+no error
+// default value
+false
+// typeof
+boolean
+// = true
+true
+// = false
+false
+// = 1
+true
+// = null
+false
+// = "yes"
+true
+// done
