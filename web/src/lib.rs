@@ -13,7 +13,9 @@ mod zip;
 
 use crate::builder::RuffleInstanceBuilder;
 use external_interface::{external_to_js_value, js_to_external_value};
-use input::{web_input_to_ruffle_key_descriptor, web_to_ruffle_text_control};
+use input::{
+    is_shortcut_key_press, web_input_to_ruffle_key_descriptor, web_to_ruffle_text_control,
+};
 use js_sys::{Error as JsError, Uint8Array};
 use ruffle_core::context::UpdateContext;
 use ruffle_core::context_menu::ContextMenuCallback;
@@ -792,7 +794,13 @@ impl RuffleHandle {
                                             code: control_code,
                                         });
                                     }
-                                } else if let Some(codepoint) = key.logical_key.character() {
+                                } else if let Some(codepoint) = key.logical_key.character()
+                                    && !is_shortcut_key_press(
+                                        js_event.ctrl_key(),
+                                        js_event.alt_key(),
+                                        js_event.meta_key(),
+                                    )
+                                {
                                     core.handle_event(PlayerEvent::TextInput { codepoint });
                                 }
                             });

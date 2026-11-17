@@ -14,6 +14,18 @@ use winit::keyboard::{
 };
 use winit::window::Window;
 
+/// Whether a key press with these modifiers is a shortcut, whose text
+/// must not be typed into a text field.
+///
+/// Flash Player does not type the character of Ctrl+key (Cmd+key on macOS):
+/// Ctrl+Z, for example, leaves the text unchanged.
+/// AltGr may be reported as Ctrl+Alt on Windows and does type text,
+/// so Ctrl+Alt is not a shortcut.
+pub fn is_shortcut_key_press(modifiers: Modifiers) -> bool {
+    let state = modifiers.state();
+    (state.super_key() && cfg!(target_os = "macos")) || (state.control_key() && !state.alt_key())
+}
+
 /// Converts a winit event to a Ruffle `TextControlCode`.
 /// Returns `None` if there is no match.
 pub fn winit_to_ruffle_text_control(
