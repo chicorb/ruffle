@@ -1532,8 +1532,8 @@ impl<'gc> EditText<'gc> {
                 TextSelection::for_range(from, to)
             }
             TextSelectionMode::Line => {
-                let from = self.find_prev_line_boundary(position);
-                let to = self.find_next_line_boundary(position);
+                let from = self.find_prev_paragraph_boundary(position);
+                let to = self.find_next_paragraph_boundary(position);
                 TextSelection::for_range(from, to)
             }
         }
@@ -1734,10 +1734,7 @@ impl<'gc> EditText<'gc> {
             TextControlCode::Enter => {
                 self.text_input(Self::INPUT_NEWLINE.to_string(), context);
             }
-            TextControlCode::MoveLeft
-            | TextControlCode::MoveLeftWord
-            | TextControlCode::MoveLeftLine
-            | TextControlCode::MoveLeftDocument => {
+            TextControlCode::MoveLeft | TextControlCode::MoveLeftWord => {
                 let new_pos = if selection.is_caret() {
                     self.find_new_position(control_code, selection.to)
                 } else {
@@ -1745,15 +1742,21 @@ impl<'gc> EditText<'gc> {
                 };
                 self.set_selection(Some(TextSelection::for_position(new_pos)));
             }
-            TextControlCode::MoveRight
-            | TextControlCode::MoveRightWord
-            | TextControlCode::MoveRightLine
-            | TextControlCode::MoveRightDocument => {
+            TextControlCode::MoveRight | TextControlCode::MoveRightWord => {
                 let new_pos = if selection.is_caret() && selection.to < self.text().len() {
                     self.find_new_position(control_code, selection.to)
                 } else {
                     selection.end()
                 };
+                self.set_selection(Some(TextSelection::for_position(new_pos)));
+            }
+            TextControlCode::MoveLeftLine
+            | TextControlCode::MoveLeftDocument
+            | TextControlCode::MoveRightLine
+            | TextControlCode::MoveRightDocument => {
+                // Unlike the arrow keys, Home and End don't collapse a selection:
+                // they move from the caret, like Flash Player.
+                let new_pos = self.find_new_position(control_code, selection.to);
                 self.set_selection(Some(TextSelection::for_position(new_pos)));
             }
             TextControlCode::SelectLeft
@@ -2009,13 +2012,63 @@ impl<'gc> EditText<'gc> {
             .unwrap_or_else(|| self.text().len())
     }
 
-    /// Find the nearest line boundary before or at `pos`.
+    /// Find the start of the line the caret at `pos` is on (Home).
+    ///
+    /// Lines are the laid out lines, so a line that is wrapped
+    /// counts as several lines, as in Flash Player.
     fn find_prev_line_boundary(self, pos: usize) -> usize {
-        // TODO take into account the text layout instead of relying on newlines only
         if pos == 0 {
             return 0;
         }
 
+        // A caret after a trailing newline is on an empty line of its own.
+        if pos >= self.text().len() && self.is_newline_at(pos - 1) {
+            return pos;
+        }
+
+        if let Some(line) = self.layout_line_range_at(pos) {
+            return line.start.min(pos);
+        }
+
+        self.find_prev_paragraph_boundary(pos)
+    }
+
+    /// Find the end of the line the caret at `pos` is on (End),
+    /// which is before the line's newline, if it has one.
+    fn find_next_line_boundary(self, pos: usize) -> usize {
+        let len = self.text().len();
+        if pos >= len {
+            return len;
+        }
+
+        if let Some(line) = self.layout_line_range_at(pos) {
+            let mut end = line.end.min(len);
+            if end > line.start && self.is_newline_at(end - 1) {
+                end -= 1;
+            }
+            return end.max(pos);
+        }
+
+        self.find_next_paragraph_boundary(pos)
+    }
+
+    /// The text range of the laid out line where a caret at `pos` is shown.
+    fn layout_line_range_at(self, pos: usize) -> Option<std::ops::Range<usize>> {
+        let layout = self.0.layout.borrow();
+        let lines = layout.lines();
+        let index = layout.find_line_index_by_position(pos).or_else(|| {
+            // The caret at the end of the text is on the last line.
+            if pos >= self.text().len() {
+                lines.len().checked_sub(1)
+            } else {
+                None
+            }
+        })?;
+        lines.get(index).map(|line| line.text_range())
+    }
+
+    /// Find the nearest paragraph boundary (newline) before or at `pos`.
+    fn find_prev_paragraph_boundary(self, pos: usize) -> usize {
         let mut line_break_pos = pos;
         while line_break_pos > 0 && !self.is_newline_at(line_break_pos - 1) {
             line_break_pos -= 1;
@@ -2024,23 +2077,21 @@ impl<'gc> EditText<'gc> {
         line_break_pos
     }
 
-    /// Find the nearest line boundary after or at `pos`.
-    fn find_next_line_boundary(self, pos: usize) -> usize {
-        // TODO take into account the text layout instead of relying on newlines only
+    /// Find the nearest paragraph boundary (newline) after or at `pos`.
+    fn find_next_paragraph_boundary(self, pos: usize) -> usize {
         let len = self.text().len();
-        if pos >= len {
-            return len;
-        }
-
-        let mut line_break_pos = pos;
+        let mut line_break_pos = pos.min(len);
         while line_break_pos < len && !self.is_newline_at(line_break_pos) {
             line_break_pos += 1;
         }
         line_break_pos
     }
 
+    /// Both `\r` (what Enter inserts) and `\n` end a paragraph.
     fn is_newline_at(self, pos: usize) -> bool {
-        self.text().get(pos).unwrap_or(0) == '\n' as u16
+        self.text()
+            .get(pos)
+            .is_some_and(string_utils::swf_is_newline)
     }
 
     pub fn text_input(self, text: String, context: &mut UpdateContext<'gc>) {
