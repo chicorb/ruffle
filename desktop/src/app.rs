@@ -3,8 +3,8 @@ use crate::gui::{GuiController, MENU_HEIGHT};
 use crate::player::{LaunchOptions, PlayerController};
 use crate::preferences::GlobalPreferences;
 use crate::util::{
-    get_screen_size, gilrs_button_to_gamepad_button, winit_input_to_ruffle_key_descriptor,
-    winit_to_ruffle_text_control,
+    get_screen_size, gilrs_button_to_gamepad_button, is_shortcut_key_press,
+    winit_input_to_ruffle_key_descriptor, winit_to_ruffle_text_control,
 };
 use anyhow::Error;
 use gilrs::{Event, EventType, Gilrs};
@@ -238,7 +238,9 @@ impl MainWindow {
                             self.handle_player_event(PlayerEvent::TextControl {
                                 code: control_code,
                             });
-                        } else if let Some(text) = event.text {
+                        } else if let Some(text) = event.text
+                            && !is_shortcut_key_press(self.modifiers)
+                        {
                             for codepoint in text.chars() {
                                 self.handle_player_event(PlayerEvent::TextInput { codepoint });
                             }

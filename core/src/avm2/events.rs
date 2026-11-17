@@ -4,11 +4,13 @@ use crate::avm2::Avm2;
 use crate::avm2::activation::Activation;
 use crate::avm2::function::FunctionArgs;
 use crate::avm2::globals::slots::flash_events_event_dispatcher as slots;
-use crate::avm2::object::{EventObject, FunctionObject, Object, TObject as _};
+use crate::avm2::object::{
+    EventObject, FunctionObject, FunctionObjectWeak, Object, ObjectPtr, TObject as _,
+};
 use crate::display_object::TDisplayObject;
 use crate::string::AvmString;
 use fnv::FnvHashMap;
-use gc_arena::Collect;
+use gc_arena::{Collect, Gc, GcWeak, Mutation};
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
@@ -220,8 +222,9 @@ impl<'gc> DispatchList<'gc> {
         priority: i32,
         handler: FunctionObject<'gc>,
         use_capture: bool,
+        use_weak_reference: bool,
     ) {
-        let new_handler = EventHandler::new(handler, use_capture);
+        let new_handler = EventHandler::new(handler, use_capture, use_weak_reference);
 
         if let Some(event_sheaf) = self.get_event(event) {
             for other_set in event_sheaf.values() {
@@ -245,7 +248,7 @@ impl<'gc> DispatchList<'gc> {
         handler: FunctionObject<'gc>,
         use_capture: bool,
     ) {
-        let old_handler = EventHandler::new(handler, use_capture);
+        let old_handler = EventHandler::new(handler, use_capture, false);
 
         for set in self.get_event_mut(event).values_mut() {
             if let Some(pos) = set.iter().position(|h| *h == old_handler) {
@@ -255,10 +258,10 @@ impl<'gc> DispatchList<'gc> {
     }
 
     /// Determine if there are any event listeners in this dispatch list.
-    pub fn has_event_listener(&self, event: AvmString<'gc>) -> bool {
+    pub fn has_event_listener(&self, event: AvmString<'gc>, mc: &Mutation<'gc>) -> bool {
         if let Some(event_sheaf) = self.get_event(event) {
             for set in event_sheaf.values() {
-                if !set.is_empty() {
+                if set.iter().any(|h| h.handler(mc).is_some()) {
                     return true;
                 }
             }
@@ -279,13 +282,19 @@ impl<'gc> DispatchList<'gc> {
         &'a mut self,
         event: AvmString<'gc>,
         use_capture: bool,
+        mc: &'a Mutation<'gc>,
     ) -> impl 'a + Iterator<Item = FunctionObject<'gc>> {
-        self.get_event_mut(event)
+        let event_sheaf = self.get_event_mut(event);
+        // Forget the weak listeners that were collected.
+        for set in event_sheaf.values_mut() {
+            set.retain(|h| h.handler(mc).is_some());
+        }
+        event_sheaf
             .iter()
             .rev()
             .flat_map(|(_p, v)| v.iter())
             .filter(move |eh| eh.use_capture == use_capture)
-            .map(|eh| eh.handler)
+            .filter_map(move |eh| eh.handler(mc))
     }
 }
 
@@ -295,12 +304,24 @@ impl Default for DispatchList<'_> {
     }
 }
 
+/// The function of an event handler, held strongly or, for listeners added
+/// with `useWeakReference`, weakly.
+///
+/// A bound method is kept alive by its receiver, so a weak listener that is a
+/// method lives as long as the object it belongs to, as in Flash Player.
+#[derive(Clone, Copy, Collect)]
+#[collect(no_drop)]
+enum HandlerRef<'gc> {
+    Strong(FunctionObject<'gc>),
+    Weak(FunctionObjectWeak<'gc>),
+}
+
 /// A single instance of an event handler.
 #[derive(Clone, Collect)]
 #[collect(no_drop)]
 struct EventHandler<'gc> {
     /// The event handler to call.
-    handler: FunctionObject<'gc>,
+    handler: HandlerRef<'gc>,
 
     /// Indicates if this handler should only be called for capturing events
     /// (when `true`), or if it should only be called for bubbling and
@@ -309,18 +330,44 @@ struct EventHandler<'gc> {
 }
 
 impl<'gc> EventHandler<'gc> {
-    fn new(handler: FunctionObject<'gc>, use_capture: bool) -> Self {
+    fn new(handler: FunctionObject<'gc>, use_capture: bool, use_weak_reference: bool) -> Self {
+        // Deliberate difference with Flash Player: only bound methods are held
+        // weakly. A closure that only a weak listener references (as in
+        // `addEventListener(type, function (e) {...}, false, 0, true)`) is
+        // garbage in Flash Player too, and stops being called whenever its
+        // collector happens to run; keeping it avoids losing events because
+        // our collector runs at different times.
+        let handler = if use_weak_reference && handler.is_bound_method() {
+            HandlerRef::Weak(FunctionObjectWeak(Gc::downgrade(handler.0)))
+        } else {
+            HandlerRef::Strong(handler)
+        };
         Self {
             handler,
             use_capture,
+        }
+    }
+
+    /// The function to call, or `None` if it was a weak listener that was
+    /// collected.
+    fn handler(&self, mc: &Mutation<'gc>) -> Option<FunctionObject<'gc>> {
+        match self.handler {
+            HandlerRef::Strong(f) => Some(f),
+            HandlerRef::Weak(w) => w.0.upgrade(mc).map(FunctionObject),
+        }
+    }
+
+    fn handler_ptr(&self) -> *const ObjectPtr {
+        match self.handler {
+            HandlerRef::Strong(f) => f.as_ptr(),
+            HandlerRef::Weak(w) => GcWeak::as_ptr(w.0).cast(),
         }
     }
 }
 
 impl PartialEq for EventHandler<'_> {
     fn eq(&self, rhs: &Self) -> bool {
-        self.use_capture == rhs.use_capture
-            && std::ptr::eq(self.handler.as_ptr(), rhs.handler.as_ptr())
+        self.use_capture == rhs.use_capture && std::ptr::eq(self.handler_ptr(), rhs.handler_ptr())
     }
 }
 
@@ -329,7 +376,7 @@ impl Eq for EventHandler<'_> {}
 impl Hash for EventHandler<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.use_capture.hash(state);
-        self.handler.as_ptr().hash(state);
+        self.handler_ptr().hash(state);
     }
 }
 
@@ -380,7 +427,7 @@ fn dispatch_event_to_target<'gc>(
     let handlers: Vec<FunctionObject<'gc>> = dispatch_list
         .as_dispatch_mut(activation.gc())
         .expect("Internal dispatch list is missing during dispatch!")
-        .iter_event_handlers(name, use_capture)
+        .iter_event_handlers(name, use_capture, activation.gc())
         .collect();
 
     if !handlers.is_empty() {

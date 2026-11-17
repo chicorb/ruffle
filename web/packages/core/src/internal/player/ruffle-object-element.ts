@@ -267,6 +267,7 @@ export class RuffleObjectElement extends RufflePlayerElement {
         )) {
             if (RuffleEmbedElement.isInterdictable(embedElem)) {
                 embedElem.remove();
+                ruffleObj.addReplacedElement(embedElem);
             }
         }
 
@@ -277,10 +278,12 @@ export class RuffleObjectElement extends RufflePlayerElement {
         )) {
             if (RuffleObjectElement.isInterdictable(objectElem)) {
                 objectElem.remove();
+                ruffleObj.addReplacedElement(objectElem);
             }
         }
 
         copyElement(elem, ruffleObj);
+        ruffleObj.addReplacedElement(elem);
 
         return ruffleObj;
     }

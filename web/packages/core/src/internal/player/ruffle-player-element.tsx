@@ -20,6 +20,10 @@ export class RufflePlayerElement extends HTMLElement implements PlayerElement {
     #inner: InnerPlayer;
     #legacyFSCommandHandler: ((command: string, args: string) => void) | null =
         null;
+    // Native elements replaced by this player. Scripts may still hold
+    // references to them from before the polyfill ran, so ExternalInterface
+    // callbacks are exposed on them too.
+    #replacedElements: Element[] = [];
 
     get onFSCommand(): ((command: string, args: string) => void) | null {
         return this.#legacyFSCommandHandler;
@@ -43,27 +47,41 @@ export class RufflePlayerElement extends HTMLElement implements PlayerElement {
             this,
             () => this.debugPlayerInfo(),
             (name) => {
-                try {
-                    Object.defineProperty(this, name, {
-                        value: (...args: unknown[]) => {
-                            return this.#inner.callExternalInterface(
-                                name,
-                                args,
-                            );
-                        },
-                        configurable: true,
-                    });
-                } catch (error) {
-                    console.warn(
-                        `Error setting ExternalInterface legacy callback for ${name}`,
-                        error,
-                    );
+                const callback = (...args: unknown[]) => {
+                    return this.#inner.callExternalInterface(name, args);
+                };
+                for (const target of [this, ...this.#replacedElements]) {
+                    try {
+                        Object.defineProperty(target, name, {
+                            value: callback,
+                            configurable: true,
+                        });
+                    } catch (error) {
+                        console.warn(
+                            `Error setting ExternalInterface legacy callback for ${name}`,
+                            error,
+                        );
+                    }
                 }
             },
         );
         this.#inner.addFSCommandHandler((command, args) => {
             this.#legacyFSCommandHandler?.(command, args);
         });
+    }
+
+    /**
+     * Records a native element that this player replaces, so that
+     * ExternalInterface callbacks are also exposed on it.
+     *
+     * Must be called before the movie loads.
+     *
+     * @param element The replaced `<object>` or `<embed>` element.
+     * @ignore
+     * @internal
+     */
+    addReplacedElement(element: Element): void {
+        this.#replacedElements.push(element);
     }
 
     ruffle<V extends keyof APIVersions = 1>(version?: V): APIVersions[V] {

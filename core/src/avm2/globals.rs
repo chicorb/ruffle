@@ -214,6 +214,7 @@ pub struct SystemClassDefs<'gc> {
     pub bitmap: Class<'gc>,
     pub bitmapdata: Class<'gc>,
     pub igraphicsdata: Class<'gc>,
+    pub iexternalizable: Class<'gc>,
     pub graphicsbitmapfill: Class<'gc>,
     pub graphicsendfill: Class<'gc>,
     pub graphicsgradientfill: Class<'gc>,
@@ -393,6 +394,7 @@ impl<'gc> SystemClassDefs<'gc> {
             bitmap: object,
             bitmapdata: object,
             igraphicsdata: object,
+            iexternalizable: object,
             graphicsbitmapfill: object,
             graphicsendfill: object,
             graphicsgradientfill: object,
@@ -794,6 +796,7 @@ pub fn init_native_system_classes(activation: &mut Activation<'_, '_>) {
             ("flash.display", "BitmapData", bitmapdata),
             ("flash.display", "DisplayObject", display_object),
             ("flash.display", "IGraphicsData", igraphicsdata),
+            ("flash.utils", "IExternalizable", iexternalizable),
             ("flash.display", "GraphicsBitmapFill", graphicsbitmapfill),
             ("flash.display", "GraphicsEndFill", graphicsendfill),
             (

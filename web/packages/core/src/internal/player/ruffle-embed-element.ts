@@ -145,6 +145,7 @@ export class RuffleEmbedElement extends RufflePlayerElement {
             externalName,
         ) as RuffleEmbedElement;
         copyElement(elem, ruffleObj);
+        ruffleObj.addReplacedElement(elem);
 
         return ruffleObj;
     }

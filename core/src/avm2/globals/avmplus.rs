@@ -11,7 +11,6 @@ use crate::avm2::{Activation, Error, Multiname, Namespace, Object, Value};
 use crate::context::UpdateContext;
 use crate::string::{AvmString, StringContext};
 
-use crate::avm2_stub_method_context;
 
 use gc_arena::Gc;
 use ruffle_macros::istr;
@@ -414,14 +413,10 @@ fn describe_internal_body<'gc>(
     }
 
     if flags.contains(DescribeTypeFlags::INCLUDE_METADATA) {
-        avm2_stub_method_context!(
-            context,
-            "avmplus",
-            "describeTypeJSON",
-            "with top-level metadata"
-        );
-
+        // Metadata declared on the class itself. Flash Player reports it with the instance
+        // traits only (the `<factory>` of a class, or the root when describing an instance).
         let metadata_object = ArrayObject::empty(context);
+        write_metadata(metadata_object, class_def.metadata(), context);
         traits.set_dynamic_property(istr!(context, "metadata"), metadata_object.into(), mc);
     } else {
         traits.set_dynamic_property(istr!(context, "metadata"), Value::Null, mc);

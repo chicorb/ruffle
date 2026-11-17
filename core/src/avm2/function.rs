@@ -53,6 +53,12 @@ impl<'gc> BoundMethod<'gc> {
         }
     }
 
+    /// Returns true if this is a method bound to a receiver (as opposed to a
+    /// closure created by a function expression).
+    pub fn is_bound(&self) -> bool {
+        self.bound_receiver.is_some()
+    }
+
     pub fn exec(
         &self,
         unbound_receiver: Value<'gc>,

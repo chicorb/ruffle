@@ -1,0 +1,4 @@
+num_ticks = 45
+
+[player_options]
+with_default_font = true

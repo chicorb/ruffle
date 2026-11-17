@@ -1,0 +1,8 @@
+num_ticks = 1
+
+[[compilers]]
+type = "Asc"
+target = "test.swf"
+class = "Test"
+scripts = ["Test.as", "Tagged.as", "SubTagged.as", "Plain.as", "ITagged.as"]
+swf_version = 15

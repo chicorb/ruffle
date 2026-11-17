@@ -10,6 +10,7 @@ use crate::avm2::error::{
     make_error_1103, make_error_1107, make_error_1110, make_error_1111,
 };
 use crate::avm2::function::FunctionArgs;
+use crate::avm2::metadata::Metadata;
 use crate::avm2::method::{Method, MethodAssociation, NativeMethodImpl};
 use crate::avm2::object::{ClassObject, Object, scriptobject_allocator};
 use crate::avm2::script::TranslationUnit;
@@ -21,8 +22,9 @@ use crate::string::{AvmString, WString};
 use bitflags::bitflags;
 use fnv::FnvHashMap;
 use gc_arena::barrier::unlock;
+use gc_arena::collect::Trace;
 use gc_arena::lock::{OnceLock, RefLock};
-use gc_arena::{Collect, Gc, Lock, Mutation};
+use gc_arena::{Collect, Finalization, Gc, GcWeak, Lock, Mutation};
 use swf::avm2::types::Trait as AbcTrait;
 
 use std::cell::{Cell, Ref};
@@ -151,6 +153,11 @@ pub struct ClassData<'gc> {
     /// The class' vtable.
     vtable: OnceLock<VTable<'gc>>,
 
+    /// Metadata declared on the class itself (e.g. `[Event(name="change")]` above
+    /// `class Foo`). Flash Player reports it with the instance traits in `describeType`,
+    /// so it is only set on instance classes. Not inherited by subclasses.
+    metadata: OnceLock<Box<[Metadata<'gc>]>>,
+
     /// The customization point for `Class(args...)` without `new`
     /// If None, a simple coercion is done.
     #[collect(require_static)]
@@ -229,6 +236,7 @@ impl<'gc> ClassData<'gc> {
             instance_init: None,
             traits: OnceLock::new(),
             vtable: OnceLock::new(),
+            metadata: OnceLock::new(),
             call_handler: None,
             custom_constructor: None,
             linked_class: Lock::new(ClassLink::Unlinked),
@@ -244,6 +252,17 @@ impl<'gc> ClassData<'gc> {
 impl<'gc> Class<'gc> {
     pub fn as_ptr(self) -> *const () {
         Gc::as_ptr(self.0).cast()
+    }
+
+    /// Traces this class as a weak reference.
+    pub fn trace_weak<C: Trace<'gc>>(self, cc: &mut C) {
+        cc.trace_gc_weak(GcWeak::erase(Gc::downgrade(self.0)));
+    }
+
+    /// Returns true if nothing strongly references this class, during
+    /// finalization. See `Gc::is_dead`.
+    pub fn is_dead(self, fc: &Finalization<'gc>) -> bool {
+        Gc::is_dead(fc, self.0)
     }
 
     /// Create an unlinked class from its name, superclass, and traits.
@@ -994,6 +1013,21 @@ impl<'gc> Class<'gc> {
         }
 
         false
+    }
+
+    /// Metadata declared on the class itself; empty if there is none.
+    pub fn metadata(self) -> &'gc [Metadata<'gc>] {
+        Gc::as_ref(self.0)
+            .metadata
+            .get()
+            .map(|m| &m[..])
+            .unwrap_or(&[])
+    }
+
+    /// Set the metadata declared on the class itself. Only the first call has an effect.
+    pub fn set_metadata(self, mc: &Mutation<'gc>, metadata: Box<[Metadata<'gc>]>) {
+        let write = Gc::write(mc, self.0);
+        let _ = unlock!(write, ClassData, metadata).set(metadata);
     }
 
     pub fn vtable(self) -> VTable<'gc> {

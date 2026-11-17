@@ -1,0 +1,10 @@
+null: a,b,<null> returned the array
+null first: a,b,<null> returned the array
+two nulls: a,b,<null>,<null> returned the array
+null and undefined: a,b,<undefined>,<null> returned the array
+null DESCENDING: b,a,<null> returned the array
+null NUMERIC: 1,2,<null> returned the array
+null UNIQUESORT: a,b,<null> returned the array
+two nulls UNIQUESORT: b,<null>,<null> returned 0
+null RETURNINDEXEDARRAY: b,<null>,a returned 2,0,1
+null two fields: a,b,<null> returned the array

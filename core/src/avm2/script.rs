@@ -600,9 +600,19 @@ impl<'gc> Script<'gc> {
             .map(|abc_trait| Trait::from_abc_trait(unit, abc_trait, activation))
             .collect::<Result<_, _>>()?;
 
+        let is_playerglobals = domain.is_playerglobals_domain(activation.avm2());
         for newtrait in &traits {
             if let TraitKind::Class { class, .. } = newtrait.kind() {
                 domain.export_class(newtrait.name(), *class, mc);
+
+                // In ABC, metadata written above a class declaration is attached to the
+                // class trait of the script. Keep it on the instance class for `describeType`.
+                // Our own playerglobals use metadata for internal purposes (`[Ruffle(...)]`),
+                // which must not be visible to content.
+                if !is_playerglobals && let Some(metadata) = newtrait.metadata() {
+                    let i_class = class.i_class().unwrap_or(*class);
+                    i_class.set_metadata(mc, metadata);
+                }
             }
         }
 

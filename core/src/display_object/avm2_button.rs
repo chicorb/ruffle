@@ -208,7 +208,7 @@ impl<'gc> Avm2Button<'gc> {
             if record.states.contains(swf_state) {
                 match context
                     .library
-                    .library_for_movie_mut(movie)
+                    .library_for_movie_mut(movie, context.gc())
                     .instantiate_by_id(record.id, context.gc_context)
                 {
                     Some(child) => {
@@ -578,6 +578,16 @@ impl<'gc> TDisplayObject<'gc> for Avm2Button<'gc> {
     fn self_bounds(self, _mode: BoundsMode) -> Rectangle<Twips> {
         // No inherent bounds; contains child DisplayObjects.
         Default::default()
+    }
+
+    /// Measured from the state being shown. A multi-record state is a synthesized Sprite,
+    /// which puts its art two levels down, so like in Flash Player it validates but does
+    /// not slice.
+    fn self_bounds_for_scale9(self) -> Rectangle<Twips> {
+        match self.get_state_child(self.0.state.get().into()) {
+            Some(child) => child.base().matrix() * child.self_bounds_for_scale9(),
+            None => Default::default(),
+        }
     }
 
     fn bounds_with_transform(self, matrix: &Matrix, mode: BoundsMode) -> Rectangle<Twips> {

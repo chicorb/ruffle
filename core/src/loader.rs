@@ -370,7 +370,7 @@ impl<'gc> LoadManager<'gc> {
                             tracing::debug!("Preloading swf to run exports {:?}", url);
 
                             // Create library for exports before preloading
-                            uc.library.library_for_movie_mut(clip.movie());
+                            uc.library.library_for_movie_mut(clip.movie(), uc.gc());
                             let res = clip.preload(uc, &mut execution_limit);
                             tracing::debug!(
                                 "Preloaded swf to run exports result {:?} {}",
@@ -1777,7 +1777,7 @@ impl<'gc> MovieLoader<'gc> {
 
         match sniffed_type {
             ContentType::Swf => {
-                let library = uc.library.library_for_movie_mut(movie);
+                let library = uc.library.library_for_movie_mut(movie, uc.gc());
 
                 library.set_avm2_domain(domain);
 
@@ -1865,7 +1865,10 @@ impl<'gc> MovieLoader<'gc> {
             ContentType::Gif | ContentType::Jpeg | ContentType::JpegXr | ContentType::Png => {
                 let mut activation = Avm2Activation::from_nothing(uc);
 
-                let library = activation.context.library.library_for_movie_mut(movie);
+                let library = activation
+                    .context
+                    .library
+                    .library_for_movie_mut(movie, activation.gc());
 
                 library.set_avm2_domain(domain);
 

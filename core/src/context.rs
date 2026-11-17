@@ -393,7 +393,7 @@ impl<'gc> UpdateContext<'gc> {
         activation
             .context
             .library
-            .library_for_movie_mut(*activation.context.root_swf)
+            .library_for_movie_mut(*activation.context.root_swf, activation.gc())
             .set_avm2_domain(stage_domain);
         activation.context.ui.set_mouse_visible(true);
 
@@ -603,6 +603,10 @@ pub struct RenderContext<'a, 'gc> {
 
     /// The current player's stage (including all loaded levels)
     pub stage: Stage<'gc>,
+
+    /// The object `BitmapData.draw` is drawing without its own transform, if any. Its scaling
+    /// grid is left off with the transform: there is no scale left for the grid to stretch.
+    pub untransformed_source: Option<DisplayObject<'gc>>,
 }
 
 impl<'gc> RenderContext<'_, 'gc> {

@@ -163,6 +163,10 @@ pub struct EditTextData<'gc> {
     /// How many lines down the text is offset by. 1-based index.
     scroll: Cell<usize>,
 
+    /// The x position the caret keeps when moving up and down between lines,
+    /// along with the caret position it applies to.
+    vertical_goal: Cell<Option<(usize, Twips)>>,
+
     /// The limit of characters that can be manually input by the user.
     /// Doesn't affect script-triggered modifications.
     max_chars: Cell<i32>,
@@ -342,6 +346,7 @@ impl<'gc> EditText<'gc> {
                 render_settings: Default::default(),
                 hscroll: Cell::new(0.0),
                 scroll: Cell::new(1),
+                vertical_goal: Cell::new(None),
                 max_chars: Cell::new(swf_tag.max_length().unwrap_or_default() as i32),
                 mouse_wheel_enabled: Cell::new(true),
                 is_fte: Cell::new(false),
@@ -1043,6 +1048,11 @@ impl<'gc> EditText<'gc> {
 
     /// The lowest visible line of text
     pub fn bottom_scroll(self) -> usize {
+        self.bottom_scroll_at(self.0.scroll.get())
+    }
+
+    /// The lowest visible line of text, when scrolled to `scroll`.
+    fn bottom_scroll_at(self, scroll: usize) -> usize {
         let layout = self.0.layout.borrow();
         let lines = layout.lines();
 
@@ -1051,7 +1061,7 @@ impl<'gc> EditText<'gc> {
         }
 
         let scroll_offset = lines
-            .get(self.0.scroll.get() - 1)
+            .get(scroll.saturating_sub(1))
             .map_or(Twips::ZERO, |l| l.offset_y());
         let target = self.0.bounds.get().height() + scroll_offset - Self::GUTTER * 2;
 
@@ -1532,8 +1542,8 @@ impl<'gc> EditText<'gc> {
                 TextSelection::for_range(from, to)
             }
             TextSelectionMode::Line => {
-                let from = self.find_prev_line_boundary(position);
-                let to = self.find_next_line_boundary(position);
+                let from = self.find_prev_paragraph_boundary(position);
+                let to = self.find_next_paragraph_boundary(position);
                 TextSelection::for_range(from, to)
             }
         }
@@ -1706,6 +1716,10 @@ impl<'gc> EditText<'gc> {
             | TextControlCode::SelectRightWord
             | TextControlCode::SelectRightLine
             | TextControlCode::SelectRightDocument
+            | TextControlCode::SelectUp
+            | TextControlCode::SelectUpPage
+            | TextControlCode::SelectDown
+            | TextControlCode::SelectDownPage
             | TextControlCode::SelectAll => self.is_selectable(),
             TextControlCode::Copy | TextControlCode::Cut => {
                 !self.is_password() && !selection.is_caret()
@@ -1713,6 +1727,13 @@ impl<'gc> EditText<'gc> {
             TextControlCode::Paste => context.ui.clipboard_available(),
             _ => true,
         }
+    }
+
+    /// Flash Player stores line breaks as `\r`: in text inserted into a field
+    /// (appended, replaced or pasted), both `\r\n` and `\n` become `\r`.
+    pub fn newlines_to_cr(text: &WStr) -> WString {
+        text.replace(WStr::from_units(b"\r\n"), WStr::from_units(b"\r"))
+            .replace(b'\n', WStr::from_units(b"\r"))
     }
 
     pub fn text_control_input(
@@ -1729,15 +1750,13 @@ impl<'gc> EditText<'gc> {
         };
 
         let mut changed = false;
+        let (scroll, hscroll) = (self.scroll(), self.hscroll());
         let is_selectable = self.is_selectable();
         match control_code {
             TextControlCode::Enter => {
                 self.text_input(Self::INPUT_NEWLINE.to_string(), context);
             }
-            TextControlCode::MoveLeft
-            | TextControlCode::MoveLeftWord
-            | TextControlCode::MoveLeftLine
-            | TextControlCode::MoveLeftDocument => {
+            TextControlCode::MoveLeft | TextControlCode::MoveLeftWord => {
                 let new_pos = if selection.is_caret() {
                     self.find_new_position(control_code, selection.to)
                 } else {
@@ -1745,15 +1764,21 @@ impl<'gc> EditText<'gc> {
                 };
                 self.set_selection(Some(TextSelection::for_position(new_pos)));
             }
-            TextControlCode::MoveRight
-            | TextControlCode::MoveRightWord
-            | TextControlCode::MoveRightLine
-            | TextControlCode::MoveRightDocument => {
+            TextControlCode::MoveRight | TextControlCode::MoveRightWord => {
                 let new_pos = if selection.is_caret() && selection.to < self.text().len() {
                     self.find_new_position(control_code, selection.to)
                 } else {
                     selection.end()
                 };
+                self.set_selection(Some(TextSelection::for_position(new_pos)));
+            }
+            TextControlCode::MoveLeftLine
+            | TextControlCode::MoveLeftDocument
+            | TextControlCode::MoveRightLine
+            | TextControlCode::MoveRightDocument => {
+                // Unlike the arrow keys, Home and End don't collapse a selection:
+                // they move from the caret, like Flash Player.
+                let new_pos = self.find_new_position(control_code, selection.to);
                 self.set_selection(Some(TextSelection::for_position(new_pos)));
             }
             TextControlCode::SelectLeft
@@ -1774,6 +1799,22 @@ impl<'gc> EditText<'gc> {
                     self.set_selection(Some(TextSelection::for_range(selection.from, new_pos)))
                 }
             }
+            TextControlCode::MoveUp
+            | TextControlCode::MoveUpPage
+            | TextControlCode::MoveDown
+            | TextControlCode::MoveDownPage => {
+                let new_pos = self.find_vertical_position(control_code, selection.to);
+                self.set_selection(Some(TextSelection::for_position(new_pos)));
+                self.scroll_by_page(control_code, context);
+            }
+            TextControlCode::SelectUp
+            | TextControlCode::SelectUpPage
+            | TextControlCode::SelectDown
+            | TextControlCode::SelectDownPage => {
+                let new_pos = self.find_vertical_position(control_code, selection.to);
+                self.set_selection(Some(TextSelection::for_range(selection.from, new_pos)));
+                self.scroll_by_page(control_code, context);
+            }
             TextControlCode::SelectAll => {
                 self.set_selection(Some(TextSelection::for_range(0, self.text().len())));
             }
@@ -1791,6 +1832,7 @@ impl<'gc> EditText<'gc> {
                     break 'paste;
                 }
 
+                let text = text.replace("\r\n", "\r").replace('\n', "\r");
                 self.text_input(text, context);
             }
             TextControlCode::Cut => {
@@ -1839,6 +1881,7 @@ impl<'gc> EditText<'gc> {
             }
         }
         if changed {
+            self.restore_scroll(scroll, hscroll);
             let mut activation = Avm1Activation::from_nothing(
                 context,
                 ActivationIdentifier::root("[Propagate Text Binding]"),
@@ -1846,6 +1889,9 @@ impl<'gc> EditText<'gc> {
             );
             self.propagate_text_binding(&mut activation);
             self.on_changed(&mut activation);
+        }
+        if control_code != TextControlCode::Copy {
+            self.scroll_to_caret(context);
         }
     }
 
@@ -1964,6 +2010,173 @@ impl<'gc> EditText<'gc> {
         }
     }
 
+    /// Find the caret position one line (or one page) above or below `pos`.
+    ///
+    /// Like in Flash Player, the caret keeps its x position while moving
+    /// through shorter lines, stays put on the first (last) line when moving
+    /// one line up (down), and goes to the start (end) of the text when moving
+    /// one page beyond the first (last) line. A page is the number of visible lines.
+    fn find_vertical_position(self, control_code: TextControlCode, pos: usize) -> usize {
+        let text_len = self.text().len();
+        let (up, page) = match control_code {
+            TextControlCode::MoveUp | TextControlCode::SelectUp => (true, false),
+            TextControlCode::MoveUpPage | TextControlCode::SelectUpPage => (true, true),
+            TextControlCode::MoveDown | TextControlCode::SelectDown => (false, false),
+            TextControlCode::MoveDownPage | TextControlCode::SelectDownPage => (false, true),
+            _ => unreachable!(),
+        };
+        let distance = if page { self.page_lines() } else { 1 };
+
+        let Some(line_index) = self.caret_line_index(pos) else {
+            return pos;
+        };
+        let layout = self.0.layout.borrow();
+        let lines = layout.lines();
+
+        let target_index = if up {
+            match line_index.checked_sub(distance) {
+                Some(index) => index,
+                None if page => return 0,
+                None => return pos,
+            }
+        } else {
+            let index = line_index + distance;
+            if index >= lines.len() {
+                return if page { text_len } else { pos };
+            }
+            index
+        };
+
+        let goal_x = match self.0.vertical_goal.get() {
+            Some((goal_pos, x)) if goal_pos == pos => x,
+            _ => Self::caret_x_in_line(&lines[line_index], pos),
+        };
+
+        let target = &lines[target_index];
+        // The caret cannot be placed after the line's last character (its
+        // newline or the space where it wraps), except on the last line.
+        let last = if target_index + 1 == lines.len() {
+            target.end().min(text_len)
+        } else {
+            target.end().saturating_sub(1).max(target.start())
+        };
+        let new_pos = (target.start()..=last)
+            .min_by_key(|&p| (Self::caret_x_in_line(target, p) - goal_x).get().abs())
+            .unwrap_or(pos);
+
+        self.0.vertical_goal.set(Some((new_pos, goal_x)));
+        new_pos
+    }
+
+    /// The number of lines PageUp and PageDown move by: the visible lines.
+    fn page_lines(self) -> usize {
+        (self.bottom_scroll() + 1)
+            .saturating_sub(self.scroll())
+            .max(1)
+    }
+
+    /// The index of the laid out line where a caret at `pos` is shown.
+    fn caret_line_index(self, pos: usize) -> Option<usize> {
+        let layout = self.0.layout.borrow();
+        layout.find_line_index_by_position(pos).or_else(|| {
+            // The caret at the end of the text is on the last line.
+            if pos >= self.text().len() {
+                layout.lines().len().checked_sub(1)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// PageUp and PageDown also scroll the text by a page, as in Flash Player.
+    fn scroll_by_page(self, control_code: TextControlCode, context: &mut UpdateContext<'gc>) {
+        let scroll = self.scroll();
+        let new_scroll = match control_code {
+            TextControlCode::MoveUpPage | TextControlCode::SelectUpPage => {
+                scroll.saturating_sub(self.page_lines()).max(1)
+            }
+            TextControlCode::MoveDownPage | TextControlCode::SelectDownPage => {
+                scroll + self.page_lines()
+            }
+            _ => return,
+        };
+        self.set_scroll(new_scroll as f64, false, context);
+    }
+
+    /// Put back the scroll position that a text change made by the user
+    /// reset (relayout scrolls back to the top). Flash Player keeps it.
+    fn restore_scroll(self, scroll: usize, hscroll: f64) {
+        self.0.scroll.set(scroll.clamp(1, self.maxscroll()));
+        self.0.hscroll.set(hscroll.clamp(0.0, self.maxhscroll()));
+        self.invalidate_cached_bitmap();
+    }
+
+    /// Scroll the text so that the caret is visible.
+    ///
+    /// Flash Player does this after the user types or moves the caret.
+    /// It scrolls vertically by as few lines as possible, and horizontally
+    /// by steps of a quarter of the visible width.
+    fn scroll_to_caret(self, context: &mut UpdateContext<'gc>) {
+        let Some(selection) = self.selection() else {
+            return;
+        };
+        let pos = selection.to;
+        let Some(line_index) = self.caret_line_index(pos) else {
+            return;
+        };
+
+        let line = line_index + 1;
+        let mut scroll = self.scroll();
+        if line < scroll {
+            scroll = line;
+        } else {
+            let max_scroll = self.maxscroll();
+            while scroll < max_scroll && line > self.bottom_scroll_at(scroll) {
+                scroll += 1;
+            }
+        }
+        if scroll != self.scroll() {
+            self.set_scroll(scroll as f64, false, context);
+        }
+
+        if self.is_word_wrap() {
+            return;
+        }
+        let caret_x = {
+            let layout = self.0.layout.borrow();
+            let Some(line) = layout.lines().get(line_index) else {
+                return;
+            };
+            Self::caret_x_in_line(line, pos).to_pixels()
+        };
+        let window_width = (self.0.bounds.get().width() - Self::GUTTER * 2)
+            .max(Twips::ZERO)
+            .to_pixels();
+        let step = (window_width / 4.0).floor().max(1.0);
+        let max_hscroll = self.maxhscroll();
+        let mut hscroll = self.hscroll();
+        while caret_x > hscroll + window_width && hscroll < max_hscroll {
+            hscroll = (hscroll + step).min(max_hscroll);
+        }
+        while caret_x < hscroll && hscroll > 0.0 {
+            hscroll = (hscroll - step).max(0.0);
+        }
+        if hscroll != self.hscroll() {
+            self.set_hscroll(hscroll);
+        }
+    }
+
+    /// The x position (in layout coordinates) of a caret placed at `pos` on `line`.
+    fn caret_x_in_line(line: &LayoutLine<'gc>, pos: usize) -> Twips {
+        if let Some((start, _)) = line.char_x_bounds(pos) {
+            start
+        } else if let Some((_, end)) = pos.checked_sub(1).and_then(|p| line.char_x_bounds(p)) {
+            end
+        } else {
+            line.bounds().offset_x()
+        }
+    }
+
     /// Find the nearest word boundary before (or exceptionally at) `pos`,
     /// which is applicable for selection.
     ///
@@ -2009,13 +2222,63 @@ impl<'gc> EditText<'gc> {
             .unwrap_or_else(|| self.text().len())
     }
 
-    /// Find the nearest line boundary before or at `pos`.
+    /// Find the start of the line the caret at `pos` is on (Home).
+    ///
+    /// Lines are the laid out lines, so a line that is wrapped
+    /// counts as several lines, as in Flash Player.
     fn find_prev_line_boundary(self, pos: usize) -> usize {
-        // TODO take into account the text layout instead of relying on newlines only
         if pos == 0 {
             return 0;
         }
 
+        // A caret after a trailing newline is on an empty line of its own.
+        if pos >= self.text().len() && self.is_newline_at(pos - 1) {
+            return pos;
+        }
+
+        if let Some(line) = self.layout_line_range_at(pos) {
+            return line.start.min(pos);
+        }
+
+        self.find_prev_paragraph_boundary(pos)
+    }
+
+    /// Find the end of the line the caret at `pos` is on (End),
+    /// which is before the line's newline, if it has one.
+    fn find_next_line_boundary(self, pos: usize) -> usize {
+        let len = self.text().len();
+        if pos >= len {
+            return len;
+        }
+
+        if let Some(line) = self.layout_line_range_at(pos) {
+            let mut end = line.end.min(len);
+            if end > line.start && self.is_newline_at(end - 1) {
+                end -= 1;
+            }
+            return end.max(pos);
+        }
+
+        self.find_next_paragraph_boundary(pos)
+    }
+
+    /// The text range of the laid out line where a caret at `pos` is shown.
+    fn layout_line_range_at(self, pos: usize) -> Option<std::ops::Range<usize>> {
+        let layout = self.0.layout.borrow();
+        let lines = layout.lines();
+        let index = layout.find_line_index_by_position(pos).or_else(|| {
+            // The caret at the end of the text is on the last line.
+            if pos >= self.text().len() {
+                lines.len().checked_sub(1)
+            } else {
+                None
+            }
+        })?;
+        lines.get(index).map(|line| line.text_range())
+    }
+
+    /// Find the nearest paragraph boundary (newline) before or at `pos`.
+    fn find_prev_paragraph_boundary(self, pos: usize) -> usize {
         let mut line_break_pos = pos;
         while line_break_pos > 0 && !self.is_newline_at(line_break_pos - 1) {
             line_break_pos -= 1;
@@ -2024,23 +2287,21 @@ impl<'gc> EditText<'gc> {
         line_break_pos
     }
 
-    /// Find the nearest line boundary after or at `pos`.
-    fn find_next_line_boundary(self, pos: usize) -> usize {
-        // TODO take into account the text layout instead of relying on newlines only
+    /// Find the nearest paragraph boundary (newline) after or at `pos`.
+    fn find_next_paragraph_boundary(self, pos: usize) -> usize {
         let len = self.text().len();
-        if pos >= len {
-            return len;
-        }
-
-        let mut line_break_pos = pos;
+        let mut line_break_pos = pos.min(len);
         while line_break_pos < len && !self.is_newline_at(line_break_pos) {
             line_break_pos += 1;
         }
         line_break_pos
     }
 
+    /// Both `\r` (what Enter inserts) and `\n` end a paragraph.
     fn is_newline_at(self, pos: usize) -> bool {
-        self.text().get(pos).unwrap_or(0) == '\n' as u16
+        self.text()
+            .get(pos)
+            .is_some_and(string_utils::swf_is_newline)
     }
 
     pub fn text_input(self, text: String, context: &mut UpdateContext<'gc>) {
@@ -2098,7 +2359,9 @@ impl<'gc> EditText<'gc> {
             text = &text[0..self.available_chars()];
         }
 
+        let (scroll, hscroll) = (self.scroll(), self.hscroll());
         self.replace_text(selection.start(), selection.end(), text, context);
+        self.restore_scroll(scroll, hscroll);
         let new_pos = selection.start() + text.len();
         self.set_selection(Some(TextSelection::for_position(new_pos)));
 
@@ -2109,6 +2372,7 @@ impl<'gc> EditText<'gc> {
         );
         self.propagate_text_binding(&mut activation);
         self.on_changed(&mut activation);
+        self.scroll_to_caret(activation.context);
     }
 
     fn initialize_listeners(self, activation: &mut Avm1Activation<'_, 'gc>) {
