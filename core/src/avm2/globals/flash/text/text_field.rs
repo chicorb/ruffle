@@ -10,7 +10,7 @@ use crate::avm2::value::Value;
 use crate::avm2::{ArrayObject, ArrayStorage, Error};
 use crate::display_object::{AutoSizeMode, EditText, TextSelection};
 use crate::html::TextFormat;
-use crate::string::AvmString;
+use crate::string::{AvmString, WStr};
 use crate::{avm2_stub_getter, avm2_stub_setter};
 use ruffle_macros::istr;
 use swf::{Color, Point};
@@ -560,6 +560,9 @@ pub fn set_text<'gc>(
         .and_then(|this| this.as_edit_text())
     {
         let text = args.get_string_non_null(activation, 0, "text")?;
+        // Flash Player stores line breaks as '\r'. Here each '\n' becomes '\r',
+        // so "\r\n" becomes two line breaks.
+        let text = text.replace(b'\n', WStr::from_units(b"\r"));
 
         this.set_text(&text, activation.context);
     }
@@ -747,7 +750,7 @@ pub fn append_text<'gc>(
         .as_display_object()
         .and_then(|this| this.as_edit_text())
     {
-        let new_text = args.get_string_non_null(activation, 0, "text")?;
+        let new_text = EditText::newlines_to_cr(&args.get_string_non_null(activation, 0, "text")?);
         let existing_length = this.text_length();
 
         this.replace_text(
@@ -822,7 +825,7 @@ pub fn replace_selected_text<'gc>(
         .as_display_object()
         .and_then(|this| this.as_edit_text())
     {
-        let value = args.get_string_non_null(activation, 0, "text")?;
+        let value = EditText::newlines_to_cr(&args.get_string_non_null(activation, 0, "text")?);
         let selection = this
             .selection()
             .unwrap_or_else(|| TextSelection::for_position(0));
@@ -852,7 +855,7 @@ pub fn replace_text<'gc>(
         // FIXME what is the behavior for negative beginIndex and endIndex?
         let begin_index = args.get_i32(0);
         let end_index = args.get_i32(1);
-        let value = args.get_string_non_null(activation, 2, "text")?;
+        let value = EditText::newlines_to_cr(&args.get_string_non_null(activation, 2, "text")?);
 
         this.replace_text(
             begin_index as usize,

@@ -1,0 +1,10 @@
+text = a<LF>b -> a<CR>b length=3 numLines=2
+text = a<CR>b -> a<CR>b length=3 numLines=2
+text = a<CR><LF>b -> a<CR><CR>b length=4 numLines=3
+text = a<LF><LF>b -> a<CR><CR>b length=4 numLines=3
+text = <LF> -> <CR> length=1 numLines=2
+appendText -> x1<CR>2<CR>3
+replaceText -> a<CR>-<CR>c
+replaceSelectedText -> a<CR>-<CR>c
+ready
+pasted l1<LF>l2<CR><LF>l3 -> l1<CR>l2<CR>l3
