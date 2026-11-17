@@ -88,6 +88,11 @@ impl<'gc> FunctionObject<'gc> {
         function_object
     }
 
+    /// Returns true if this function is a method bound to a receiver.
+    pub fn is_bound_method(self) -> bool {
+        self.0.exec.is_bound()
+    }
+
     pub fn call(
         self,
         activation: &mut Activation<'_, 'gc>,
