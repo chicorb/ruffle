@@ -11,7 +11,6 @@ use crate::avm2::{ArrayObject, ArrayStorage, Error};
 use crate::display_object::{AutoSizeMode, EditText, TextSelection};
 use crate::html::TextFormat;
 use crate::string::{AvmString, WStr};
-use crate::{avm2_stub_getter, avm2_stub_setter};
 use ruffle_macros::istr;
 use swf::{Color, Point};
 
@@ -1472,20 +1471,36 @@ pub fn set_max_chars<'gc>(
 }
 
 pub fn get_mouse_wheel_enabled<'gc>(
-    activation: &mut Activation<'_, 'gc>,
-    _this: Value<'gc>,
+    _activation: &mut Activation<'_, 'gc>,
+    this: Value<'gc>,
     _args: FunctionArgs<'_, 'gc>,
 ) -> Result<Value<'gc>, Error<'gc>> {
-    avm2_stub_getter!(activation, "flash.text.TextField", "mouseWheelEnabled");
-    Ok(true.into())
+    let this = this.as_object().unwrap();
+
+    if let Some(this) = this
+        .as_display_object()
+        .and_then(|this| this.as_edit_text())
+    {
+        return Ok(this.is_mouse_wheel_enabled().into());
+    }
+
+    Ok(Value::Undefined)
 }
 
 pub fn set_mouse_wheel_enabled<'gc>(
-    activation: &mut Activation<'_, 'gc>,
-    _this: Value<'gc>,
-    _args: FunctionArgs<'_, 'gc>,
+    _activation: &mut Activation<'_, 'gc>,
+    this: Value<'gc>,
+    args: FunctionArgs<'_, 'gc>,
 ) -> Result<Value<'gc>, Error<'gc>> {
-    avm2_stub_setter!(activation, "flash.text.TextField", "mouseWheelEnabled");
+    let this = this.as_object().unwrap();
+
+    if let Some(this) = this
+        .as_display_object()
+        .and_then(|this| this.as_edit_text())
+    {
+        this.set_mouse_wheel_enabled(args.get_bool(0));
+    }
+
     Ok(Value::Undefined)
 }
 
