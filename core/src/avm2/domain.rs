@@ -64,6 +64,27 @@ struct DomainDataMut<'gc> {
     /// use with `debug_ui`
     #[cfg(feature = "egui")]
     children: Vec<DomainWeak<'gc>>,
+
+    /// Fingerprints of the lazily initialized ABC blocks loaded into this
+    /// domain. See `Domain::has_loaded_lazy_abc`.
+    #[collect(require_static)]
+    lazy_abcs: Vec<AbcFingerprint>,
+}
+
+/// Identifies the bytes of an ABC block: its length and two independent
+/// hashes of its contents.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct AbcFingerprint(usize, u64, u64);
+
+impl AbcFingerprint {
+    pub fn of(data: &[u8]) -> Self {
+        use std::hash::{Hash, Hasher};
+        let mut sip = std::hash::DefaultHasher::new();
+        data.hash(&mut sip);
+        let mut fnv = fnv::FnvHasher::default();
+        data.hash(&mut fnv);
+        Self(data.len(), sip.finish(), fnv.finish())
+    }
 }
 
 const MIN_DOMAIN_MEMORY_LENGTH: usize = 1024;
@@ -94,6 +115,7 @@ impl<'gc> Domain<'gc> {
                     classes: PropertyMap::new(),
                     #[cfg(feature = "egui")]
                     children: Vec::new(),
+                    lazy_abcs: Vec::new(),
                 }),
                 parent,
                 domain_memory: Default::default(),
@@ -148,6 +170,7 @@ impl<'gc> Domain<'gc> {
                     classes: PropertyMap::new(),
                     #[cfg(feature = "egui")]
                     children: Vec::new(),
+                    lazy_abcs: Vec::new(),
                 }),
                 parent: Some(parent),
                 domain_memory: Lock::new(Some(domain_memory)),
@@ -336,6 +359,26 @@ impl<'gc> Domain<'gc> {
         }
 
         self.cell_mut(mc).defs.insert_at_end(name, script);
+    }
+
+    /// Returns true if an identical lazily initialized ABC block was already
+    /// loaded into this domain or one of its parents.
+    pub fn has_loaded_lazy_abc(self, fingerprint: AbcFingerprint) -> bool {
+        if self.cell().lazy_abcs.contains(&fingerprint) {
+            return true;
+        }
+
+        if let Some(parent) = self.0.parent {
+            return parent.has_loaded_lazy_abc(fingerprint);
+        }
+
+        false
+    }
+
+    /// Remembers that a lazily initialized ABC block was loaded into this
+    /// domain.
+    pub fn add_loaded_lazy_abc(self, fingerprint: AbcFingerprint, mc: &Mutation<'gc>) {
+        self.cell_mut(mc).lazy_abcs.push(fingerprint);
     }
 
     /// Export a class into the current application domain.

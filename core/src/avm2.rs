@@ -81,7 +81,7 @@ pub use crate::avm2::array::ArrayStorage;
 pub use crate::avm2::call_stack::CallStack;
 pub use crate::avm2::class::Class;
 #[allow(unused)] // For debug_ui
-pub use crate::avm2::domain::{Domain, DomainPtr};
+pub use crate::avm2::domain::{AbcFingerprint, Domain, DomainPtr};
 pub use crate::avm2::error::Error;
 pub use crate::avm2::flv::FlvValueAvm2Ext;
 pub use crate::avm2::function::FunctionArgs;
@@ -548,6 +548,21 @@ impl<'gc> Avm2<'gc> {
         domain: Domain<'gc>,
         movie: SwfMovie<'gc>,
     ) -> Result<Option<Script<'gc>>, Error<'gc>> {
+        // A lazily initialized ABC block identical to one already loaded in
+        // this domain (the same SWF loaded again into the same domain, as
+        // Flex does with modules) has nothing reachable: the first copy
+        // already defines all of its public names (the first definition wins),
+        // its private names can only be reached by its own code, and nothing
+        // runs when it loads. Parsing it and loading all of its classes would
+        // only use memory.
+        let lazy = flags.contains(DoAbc2Flag::LAZY_INITIALIZE);
+        let fingerprint = lazy.then(|| AbcFingerprint::of(data));
+        if let Some(fingerprint) = fingerprint
+            && domain.has_loaded_lazy_abc(fingerprint)
+        {
+            return Ok(None);
+        }
+
         let mut reader = Reader::new(data);
         let abc = match reader.read() {
             Ok(abc) => abc,
@@ -580,10 +595,11 @@ impl<'gc> Avm2<'gc> {
             tunit.load_script(i as u32, &mut activation)?;
         }
 
-        if !flags.contains(DoAbc2Flag::LAZY_INITIALIZE) {
-            return Ok(Some(tunit.get_script(num_scripts - 1).unwrap()));
+        if let Some(fingerprint) = fingerprint {
+            domain.add_loaded_lazy_abc(fingerprint, activation.gc());
+            return Ok(None);
         }
-        Ok(None)
+        Ok(Some(tunit.get_script(num_scripts - 1).unwrap()))
     }
 
     /// Load the playerglobal ABC file.
