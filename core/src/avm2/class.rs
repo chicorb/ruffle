@@ -22,8 +22,9 @@ use crate::string::{AvmString, WString};
 use bitflags::bitflags;
 use fnv::FnvHashMap;
 use gc_arena::barrier::unlock;
+use gc_arena::collect::Trace;
 use gc_arena::lock::{OnceLock, RefLock};
-use gc_arena::{Collect, Gc, Lock, Mutation};
+use gc_arena::{Collect, Finalization, Gc, GcWeak, Lock, Mutation};
 use swf::avm2::types::Trait as AbcTrait;
 
 use std::cell::{Cell, Ref};
@@ -251,6 +252,17 @@ impl<'gc> ClassData<'gc> {
 impl<'gc> Class<'gc> {
     pub fn as_ptr(self) -> *const () {
         Gc::as_ptr(self.0).cast()
+    }
+
+    /// Traces this class as a weak reference.
+    pub fn trace_weak<C: Trace<'gc>>(self, cc: &mut C) {
+        cc.trace_gc_weak(GcWeak::erase(Gc::downgrade(self.0)));
+    }
+
+    /// Returns true if nothing strongly references this class, during
+    /// finalization. See `Gc::is_dead`.
+    pub fn is_dead(self, fc: &Finalization<'gc>) -> bool {
+        Gc::is_dead(fc, self.0)
     }
 
     /// Create an unlinked class from its name, superclass, and traits.

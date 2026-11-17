@@ -208,7 +208,7 @@ impl<'gc> Avm2Button<'gc> {
             if record.states.contains(swf_state) {
                 match context
                     .library
-                    .library_for_movie_mut(movie)
+                    .library_for_movie_mut(movie, context.gc())
                     .instantiate_by_id(record.id, context.gc_context)
                 {
                     Some(child) => {

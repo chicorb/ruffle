@@ -168,7 +168,7 @@ impl<'gc> Avm1Button<'gc> {
                     _ => {
                         if let Some(child) = context
                             .library
-                            .library_for_movie_mut(movie)
+                            .library_for_movie_mut(movie, context.gc())
                             .instantiate_by_id(record.id, context.gc_context)
                         {
                             // New child that did not previously exist, create it.
@@ -301,7 +301,7 @@ impl<'gc> TDisplayObject<'gc> for Avm1Button<'gc> {
                 if record.states.contains(swf::ButtonState::HIT_TEST) {
                     match context
                         .library
-                        .library_for_movie_mut(self.0.movie())
+                        .library_for_movie_mut(self.0.movie(), context.gc())
                         .instantiate_by_id(record.id, context.gc_context)
                     {
                         Some(child) => {

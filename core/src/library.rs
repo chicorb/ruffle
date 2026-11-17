@@ -8,7 +8,8 @@ use crate::font::{Font, FontDescriptor, FontLike, FontQuery, FontType};
 use crate::prelude::*;
 use crate::string::AvmString;
 use crate::tag_utils::SwfMovie;
-use gc_arena::{Collect, Mutation};
+use gc_arena::collect::Trace;
+use gc_arena::{Collect, Finalization, Gc, GcWeak, Mutation, RefLock};
 use ruffle_render::backend::RenderBackend;
 use ruffle_render::bitmap::BitmapHandle;
 use ruffle_render::utils::remove_invalid_jpeg_data;
@@ -25,12 +26,26 @@ struct MovieSymbol<'gc>(SwfMovie<'gc>, CharacterId);
 
 /// The mappings between class objects and library characters defined by
 /// `SymbolClass`.
-#[derive(Collect)]
-#[collect(no_drop)]
 pub struct Avm2ClassRegistry<'gc> {
     /// A list of AVM2 class objects and the character IDs they are expected to
     /// instantiate.
+    ///
+    /// The entries are ephemerons: a class does not keep itself alive through
+    /// this map, and its movie is only kept alive while the class is. See
+    /// `Library::resurrect_live_entries`.
     class_map: HashMap<Avm2Class<'gc>, MovieSymbol<'gc>>,
+}
+
+// SAFETY: every pointer is traced weakly; `Library::remove_dead_entries` drops
+// the entries whose class is dead before they can be swept, and
+// `Library::resurrect_live_entries` keeps the movie of every live class alive.
+unsafe impl<'gc> Collect<'gc> for Avm2ClassRegistry<'gc> {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
+        for (class, MovieSymbol(movie, _)) in &self.class_map {
+            class.trace_weak(cc);
+            cc.trace(&movie.downgrade());
+        }
+    }
 }
 
 impl Default for Avm2ClassRegistry<'_> {
@@ -86,6 +101,21 @@ impl<'gc> Avm2ClassRegistry<'gc> {
             return;
         }
         self.class_map.insert(class_def, MovieSymbol(movie, symbol));
+    }
+
+    fn resurrect_live_entries(&self, fc: &Finalization<'gc>) -> bool {
+        let mut resurrected = false;
+        for (class, MovieSymbol(movie, _)) in &self.class_map {
+            if !class.is_dead(fc) && movie.is_dead(fc) {
+                movie.resurrect(fc);
+                resurrected = true;
+            }
+        }
+        resurrected
+    }
+
+    fn remove_dead_entries(&mut self, fc: &Finalization<'gc>) {
+        self.class_map.retain(|class, _| !class.is_dead(fc));
     }
 }
 
@@ -373,9 +403,28 @@ impl ruffle_render::bitmap::BitmapSource for MovieLibrarySource<'_, '_> {
     }
 }
 
-#[derive(Collect)]
-#[collect(no_drop)]
-struct MovieLibraries<'gc>(HashMap<SwfMovie<'gc>, MovieLibrary<'gc>>);
+/// The libraries of every movie, by movie.
+///
+/// The entries are ephemerons: a movie is not kept alive by its own library
+/// (which references the movie, its characters and its AVM2 domain), only by
+/// references from outside the library. Once nothing else references a movie,
+/// its entry is dropped by the garbage collector. Without this, every loaded
+/// movie, with all of its characters, classes and scripts, would stay in memory
+/// until the player is destroyed.
+struct MovieLibraries<'gc>(HashMap<SwfMovie<'gc>, Gc<'gc, RefLock<MovieLibrary<'gc>>>>);
+
+// SAFETY: every pointer is traced weakly; `MovieLibraries::remove_dead_entries`
+// drops the entries whose movie is dead before they can be swept, and
+// `MovieLibraries::resurrect_live_entries` keeps the library of every live
+// movie alive.
+unsafe impl<'gc> Collect<'gc> for MovieLibraries<'gc> {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
+        for (movie, library) in &self.0 {
+            cc.trace(&movie.downgrade());
+            cc.trace_gc_weak(GcWeak::erase(Gc::downgrade(*library)));
+        }
+    }
+}
 
 impl<'gc> MovieLibraries<'gc> {
     fn new() -> Self {
@@ -383,17 +432,44 @@ impl<'gc> MovieLibraries<'gc> {
     }
 
     fn get(&self, key: SwfMovie<'gc>) -> Option<&MovieLibrary<'gc>> {
-        self.0.get(&key)
+        // SAFETY: the libraries are only reachable through this map, so the
+        // borrow of `self` guarantees there is no `&mut` to them.
+        self.0
+            .get(&key)
+            .map(|library| unsafe { &*library.as_ref_cell().as_ptr() })
     }
 
-    fn get_or_insert_mut(&mut self, movie: SwfMovie<'gc>) -> &mut MovieLibrary<'gc> {
-        self.0
+    fn get_or_insert_mut(
+        &mut self,
+        movie: SwfMovie<'gc>,
+        mc: &Mutation<'gc>,
+    ) -> &mut MovieLibrary<'gc> {
+        let library = *self
+            .0
             .entry(movie)
-            .or_insert_with(|| MovieLibrary::new(movie))
+            .or_insert_with(|| Gc::new(mc, RefLock::new(MovieLibrary::new(movie))));
+        // SAFETY: the libraries are only reachable through this map, so the
+        // mutable borrow of `self` guarantees this is the only reference.
+        unsafe { &mut *Gc::write(mc, library).unlock().as_ptr() }
     }
 
     fn known_movies(&self) -> impl Iterator<Item = SwfMovie<'gc>> {
         self.0.keys().copied()
+    }
+
+    fn resurrect_live_entries(&self, fc: &Finalization<'gc>) -> bool {
+        let mut resurrected = false;
+        for (movie, library) in &self.0 {
+            if !movie.is_dead(fc) && Gc::is_dead(fc, *library) {
+                Gc::resurrect(fc, *library);
+                resurrected = true;
+            }
+        }
+        resurrected
+    }
+
+    fn remove_dead_entries(&mut self, fc: &Finalization<'gc>) {
+        self.0.retain(|movie, _| !movie.is_dead(fc));
     }
 }
 
@@ -448,8 +524,30 @@ impl<'gc> Library<'gc> {
         self.movie_libraries.get(movie)
     }
 
-    pub fn library_for_movie_mut(&mut self, movie: SwfMovie<'gc>) -> &mut MovieLibrary<'gc> {
-        self.movie_libraries.get_or_insert_mut(movie)
+    pub fn library_for_movie_mut(
+        &mut self,
+        movie: SwfMovie<'gc>,
+        mc: &Mutation<'gc>,
+    ) -> &mut MovieLibrary<'gc> {
+        self.movie_libraries.get_or_insert_mut(movie, mc)
+    }
+
+    /// Keeps alive what the ephemeron tables of the library reference for
+    /// their live keys. To be called once the arena is fully marked, until it
+    /// returns `false` (each call can make more keys live). Then call
+    /// `remove_dead_entries`.
+    pub fn resurrect_live_entries(&self, fc: &Finalization<'gc>) -> bool {
+        // Both must run: don't short-circuit.
+        let movies = self.movie_libraries.resurrect_live_entries(fc);
+        let classes = self.avm2_class_registry.resurrect_live_entries(fc);
+        movies || classes
+    }
+
+    /// Drops the entries of the ephemeron tables whose key is dead. To be
+    /// called after `resurrect_live_entries`, right before sweeping.
+    pub fn remove_dead_entries(&mut self, fc: &Finalization<'gc>) {
+        self.movie_libraries.remove_dead_entries(fc);
+        self.avm2_class_registry.remove_dead_entries(fc);
     }
 
     pub fn known_movies(&self) -> impl Iterator<Item = SwfMovie<'gc>> {

@@ -503,7 +503,7 @@ impl<'gc> MovieClip<'gc> {
         if let Some(symbol) = progress.cur_preload_symbol.take() {
             match context
                 .library
-                .library_for_movie_mut(self.movie())
+                .library_for_movie_mut(self.movie(), context.gc())
                 .character_by_id(symbol)
             {
                 Some(Character::MovieClip(mc)) => {
@@ -681,7 +681,10 @@ impl<'gc> MovieClip<'gc> {
         let data = reader.read_slice_to_end();
         if !data.is_empty() {
             let movie = self.movie();
-            let domain = context.library.library_for_movie_mut(movie).avm2_domain();
+            let domain = context
+                .library
+                .library_for_movie_mut(movie, context.gc())
+                .avm2_domain();
 
             // DoAbc tag seems to be equivalent to a DoAbc2 with no flags (eager)
             match Avm2::do_abc(
@@ -723,7 +726,10 @@ impl<'gc> MovieClip<'gc> {
         let do_abc = reader.read_do_abc_2()?;
         if !do_abc.data.is_empty() {
             let movie = self.movie();
-            let domain = context.library.library_for_movie_mut(movie).avm2_domain();
+            let domain = context
+                .library
+                .library_for_movie_mut(movie, context.gc())
+                .avm2_domain();
             let name = AvmString::new(context.gc(), do_abc.name.decode(reader.encoding()));
 
             match Avm2::do_abc(
@@ -774,7 +780,9 @@ impl<'gc> MovieClip<'gc> {
         }
 
         let mc = context.gc();
-        let library = context.library.library_for_movie_mut(self.movie());
+        let library = context
+            .library
+            .library_for_movie_mut(self.movie(), context.gc());
 
         for asset in exported_assets {
             let name = asset.name.decode(reader.encoding());
@@ -1513,7 +1521,7 @@ impl<'gc> MovieClip<'gc> {
         }
 
         let movie = self.movie();
-        let library = context.library.library_for_movie_mut(movie);
+        let library = context.library.library_for_movie_mut(movie, context.gc());
         match library.instantiate_by_id(id, context.gc_context) {
             Some(child) => {
                 // Remove previous child from children list,
@@ -4061,7 +4069,7 @@ impl<'gc, 'a> MovieClipShared<'gc> {
         movie: SwfMovie<'gc>,
     ) {
         let mc = context.gc();
-        let library = context.library.library_for_movie_mut(movie);
+        let library = context.library.library_for_movie_mut(movie, context.gc());
         library.register_export(id, name);
 
         // TODO: do other types of Character need to know their exported name?
@@ -4101,7 +4109,8 @@ impl<'gc, 'a> MovieClipShared<'gc> {
                 tracing::debug!("register_export asset: {} (ID: {})", name, export.id);
 
                 if let Some(parent) = importer_movie {
-                    let parent_library = context.library.library_for_movie_mut(parent);
+                    let parent_library =
+                        context.library.library_for_movie_mut(parent, context.gc());
 
                     if let Some(id) = parent_library.character_id_by_import_name(&name) {
                         parent_library.register_character(id, character);
@@ -4357,7 +4366,10 @@ impl<'gc, 'a> MovieClip<'gc> {
 
             let movie = self.movie();
 
-            let library = activation.context.library.library_for_movie_mut(movie);
+            let library = activation
+                .context
+                .library
+                .library_for_movie_mut(movie, activation.gc());
             let domain = library.avm2_domain();
 
             for (class_name, id) in eager_tags.symbolclass_names {
@@ -4370,7 +4382,10 @@ impl<'gc, 'a> MovieClip<'gc> {
                             .avm2_class_registry_mut()
                             .set_class_symbol(class_object.inner_class_definition(), movie, id);
 
-                        let library = activation.context.library.library_for_movie_mut(movie);
+                        let library = activation
+                            .context
+                            .library
+                            .library_for_movie_mut(movie, activation.gc());
 
                         match library.character_by_id(id) {
                             Some(Character::EditText(edit_text)) => {
@@ -4418,8 +4433,10 @@ impl<'gc, 'a> MovieClip<'gc> {
 
                                 let instantiated = self.instantiate(activation.gc());
 
-                                let library =
-                                    activation.context.library.library_for_movie_mut(movie);
+                                let library = activation
+                                    .context
+                                    .library
+                                    .library_for_movie_mut(movie, activation.gc());
 
                                 library.register_character(id, Character::MovieClip(instantiated));
                             }
@@ -4800,7 +4817,9 @@ impl<'gc> MovieClipShared<'gc> {
     }
 
     fn library_mut<'a>(&self, context: &'a mut UpdateContext<'gc>) -> &'a mut MovieLibrary<'gc> {
-        context.library.library_for_movie_mut(self.movie())
+        context
+            .library
+            .library_for_movie_mut(self.movie(), context.gc())
     }
 
     fn take_eager_tags(&self, frame: FrameNumber) -> Option<EagerTags> {
